@@ -1,0 +1,23 @@
+exp_name: 'bp4d'
+# source domain
+source_domain: 'bp4d'
+source_data_root: '/workspace/dataset'
+source_train_list: './data/bp4d/total.csv'
+# target domain
+target_domain: 'bp4d'
+target_data_root: '/workspace/dataset'
+fold: 1
+target_train_list: './data/bp4d/train_2f.csv'
+target_test_list: './data/bp4d/test_2f.csv'
+
+input_shape: [3, 224, 224]
+au_list: [1, 2, 4, 6, 7, 10, 12, 14, 15, 17, 23, 24]
+class_num: 12
+batch_size: 128
+number_works: 8
+seed: 2025
+epochs: 20
+lr_init: 0.00001
+optimizer: 'adamw'
+weight_decay: 0.0005
+backbone: 'RN50' # RN50, ViT-B/16
