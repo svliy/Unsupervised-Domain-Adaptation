@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pdb
 
 from .clip import clip
+from .graph import GNN
 
 class TransferAU(nn.Module):
     def __init__(self, config) -> None:
@@ -45,11 +46,10 @@ class TransferAU(nn.Module):
         self.vision_adapter_s3_pool = nn.AvgPool2d(kernel_size=2, stride=2)
         self.vision_adapter_s4_pool = nn.AvgPool2d(kernel_size=1, stride=1)
         
+        self.gnn = GNN(self.vision_dim, num_classes=4, neighbor_num=4, metric='cosine')
+        
         self.head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(4 * self.vision_dim, 256),
-            nn.Linear(256, 256),
-            nn.Linear(256, self.class_num),
+            nn.Linear(4 * self.vision_dim, self.class_num),
         )
         
         self.sigmoid = nn.Sigmoid()
@@ -68,6 +68,8 @@ class TransferAU(nn.Module):
     
     def forward(self, x):
         # x: [64, 3, 224, 224]
+        
+        B, C, H, W = x.shape
         # 获取多尺度图像特征
         image_features = self.vision_encoder(x) # RN50: [128, 1024]
         v_f_s1 = self.vision_features['layer1'] # [128, 256, 56, 56]
@@ -88,12 +90,18 @@ class TransferAU(nn.Module):
         v_f_s4_same = self.vision_adapter_s4(v_f_s4) # [128, 512, 7, 7]
         v_f_s4_same = self.vision_adapter_s4_pool(v_f_s4_same) # [128, 512, 7, 7]
         
-        # 特征融合
-        v_f_fusion = torch.cat((v_f_s1_same, v_f_s2_same, v_f_s3_same, v_f_s4_same), dim=1) # [128, 2048, 7, 7]
-        v_f_fusion = self.avgpool_global(v_f_fusion) # [128, 2048, 1, 1]
+        # 构造图神经网络
+        g_nodes = torch.stack([v_f_s1_same, v_f_s2_same, v_f_s3_same, v_f_s4_same]) # [4, 128, 512, 7, 7]
+        # g_nodes = torch.cat((v_f_s1_same, v_f_s2_same, v_f_s3_same, v_f_s4_same), dim=1) # [128, 2048, 7, 7]
+        g_nodes = g_nodes.permute(1, 0, 2, 3, 4).contiguous().view(B, 4, self.vision_dim, -1) # [128, 4, 512, 49]
+        g_nodes = g_nodes.mean(dim=-1) # [128, 4, 512]
+        g_nodes = self.gnn(g_nodes) # [128, 4, 512]
+        
+        v_f_fusion = torch.flatten(g_nodes, start_dim=1) # [128, 2048]
+        # v_f_fusion = self.avgpool_global(v_f_fusion) # [128, 2048, 1, 1]
         
         output = self.head(v_f_fusion) # [128, 10]
-        output = self.sigmoid(output)
+        # output = self.sigmoid(output)
 
         # pdb.set_trace()
         return output

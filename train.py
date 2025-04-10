@@ -1,5 +1,6 @@
 import logging
 import argparse
+import math
 
 from tqdm import tqdm
 
@@ -41,14 +42,14 @@ def set_dataset(config):
 
     return source_loader, target_loader, val_loader
 
-def train(epoch, config, model, source_loader, target_loader, criterion, optimizer):
+def train(epoch, config, model, source_loader, target_loader, criterion, optimizer, scheduler):
     # 记录损失
     loss_source_bce = AverageMeter()
     loss_all = AverageMeter()
     # 设置模型为train模式
     model.train()
     model.vision_encoder.eval()
-    pdb.set_trace()
+    # pdb.set_trace()
     # 计算指标
     statistics_list = None
     # 手动获取数据迭代器
@@ -57,7 +58,7 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
     source_len = len(source_loader)
     target_len = len(target_loader)
     n = min(len(source_loader), len(target_loader))
-    display_interval = n // 10
+    display_interval = n // 5
     
     for batch_idx in tqdm(range(n)):
         
@@ -83,17 +84,18 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
         # forward pass
         source_output = model(source_img)
         # 损失计算，临时变量
-        source_bce_loss = criterion[0](source_output, source_label) # 源域分类损失
+        source_bce_loss = criterion[0](source_output.sigmoid(), source_label) # 源域分类损失
         loss = source_bce_loss # 整体损失
         # backward pass
         loss.backward()
         # update the parameters
         optimizer.step()
+        scheduler.step()
         
         loss_source_bce.update(source_bce_loss.data.item(), config.batch_size)
         loss_all.update(loss.data.item(), config.batch_size)
         
-        update_list = statistics(source_output.detach(), source_label.detach(), 0.5)
+        update_list = statistics(source_output.sigmoid().detach(), source_label.detach(), 0.5)
         statistics_list = update_statistics_list(statistics_list, update_list)
         
         # 损失记录
@@ -114,7 +116,7 @@ def val(epoch, config, model, val_loader, criterion, optimizer):
     model.eval()
     statistics_list = None
     n = len(val_loader)
-    display_interval = n // 10
+    display_interval = n // 5
     
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(tqdm(val_loader)):
@@ -126,15 +128,15 @@ def val(epoch, config, model, val_loader, criterion, optimizer):
             # forward pass
             output = model(images)
             # 损失计算，临时变量
-            bce_loss = criterion[0](output, labels) # 源域分类损失
+            bce_loss = criterion[0](output.sigmoid(), labels) # 源域分类损失
             loss = bce_loss # 整体损失
             loss_all.update(loss.data.item(), config.batch_size)
             
-            update_list = statistics(output.detach(), labels.detach(), 0.5)
+            update_list = statistics(output.sigmoid().detach(), labels.detach(), 0.5)
             statistics_list = update_statistics_list(statistics_list, update_list)
             # 损失记录
-            if batch_idx == 0 or (batch_idx % display_interval == 0):
-                logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{n} | loss: {loss_all.avg:.6f}')
+            # if batch_idx == 0 or (batch_idx % display_interval == 0):
+            #     logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{n} | loss: {loss_all.avg:.6f}')
     
     mean_f1_score, f1_score_list = calc_f1_score(statistics_list)
     
@@ -148,6 +150,7 @@ if __name__ == '__main__':
     # 命令行设置
     parse = argparse.ArgumentParser()
     parse.add_argument('--config_name', type=str, default='bp4d2disfa', help='name for config file')
+    parse.add_argument('--mode', type=str, default='cross', help='source, cross, target')
     args = parse.parse_args()
     
     # 获取配置
@@ -155,10 +158,10 @@ if __name__ == '__main__':
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
-    if config.config_name == "bp4d2disfa":
-        dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU12: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4])}
+    dataset_info = set_dataset_info(config)
     
     # 构造数据集
+    logger.info("********Cross********")
     source_loader, target_loader, val_loader = set_dataset(config)
     # 获取weight
     weight = get_weight(config.source_train_list, config.au_list)
@@ -175,7 +178,13 @@ if __name__ == '__main__':
     params = filter(lambda p: p.requires_grad, model.parameters())
     # 损失函数和优化器
     criterion = [WeightedAsymmetricLoss(weight=weight.cuda())]
-    optimizer = optim.SGD(params, lr=config.lr_init, momentum=0.9, weight_decay=5e-4)
+    if config.optimizer == 'adamw':
+        optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
+     # 学习率调度器
+    n = min(len(source_loader), len(target_loader))
+    iterations_per_epoch = math.ceil(n)
+    total_iterations = iterations_per_epoch * config.epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iterations)
     
     # Train and val loop    
     best_f1 = 0
@@ -185,7 +194,7 @@ if __name__ == '__main__':
         logger.info("Epoch: [{} | {} LR: {} ]".format(epoch, config.epochs, lr))
         
         logger.info('==> Training...')
-        train_output = train(epoch, config, model, source_loader, target_loader, criterion, optimizer)
+        train_output = train(epoch, config, model, source_loader, target_loader, criterion, optimizer, scheduler)
         logger.info({'Epoch: {}  train_loss: {:.6f}  wa_loss: {:.6f} train_f1: {:.2f}'.format(epoch, train_output['loss'], train_output['source_bce_loss'], 100.*train_output['mean_f1_score'])})
         logger.info({'Train F1-score-list:'})
         logger.info(dataset_info(train_output['f1_score_list']))
@@ -206,5 +215,5 @@ if __name__ == '__main__':
                 'optimizer': optimizer.state_dict(),
             }
             torch.save(checkpoint, os.path.join(config['outdir'], 'best_model_fold' + str(config.fold) + '.pth'))
-            
+        
         logger.info(f"Best f1: {best_f1} at epoch {best_epoch}")

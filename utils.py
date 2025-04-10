@@ -257,6 +257,7 @@ def set_config(args):
     with open(f'config/{args.config_name}.yaml', 'r') as f:
         config = edict(yaml.safe_load(f))
         config.config_name = args.config_name
+        config.mode = args.mode
     return config
 
 def set_seed(seed: int):
@@ -280,7 +281,7 @@ def set_outdir(config):
         outdir = os.path.join(default_outdir, config.exp_name,timestr)
     else:
         outdir = os.path.join(default_outdir, config.exp_name)
-        prefix = 'fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
+        prefix = str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
         outdir = os.path.join(outdir,prefix)
     ensure_dir(outdir)
     config['outdir'] = outdir
@@ -319,6 +320,16 @@ def get_weight(scv_file_path, au_list):
     
     return torch.tensor(AU_weight)
 
+def set_dataset_info(config):
+    if config.config_name == "bp4d2disfa":
+        dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU12: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4])}
+    elif config.config_name == "bp4d2gft":
+        dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU23: {:.2f} AU24: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9])}        
+    elif config.config_name == "bp4d":
+        dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU7: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU17: {:.2f} AU23: {:.2f} AU24: {:.2f} '.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9],100.*list[10],100.*list[11])}
+
+    return dataset_info
+    
 if __name__ == '__main__':
     
     print(get_weight(edict({

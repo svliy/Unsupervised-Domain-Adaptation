@@ -16,7 +16,7 @@ class_num: 10
 batch_size: 128
 number_works: 8
 seed: 2025
-epochs: 15
+epochs: 20
 lr_init: 0.00001
 optimizer: 'adamw'
 weight_decay: 0.0005

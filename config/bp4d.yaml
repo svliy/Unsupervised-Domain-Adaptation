@@ -7,8 +7,8 @@ source_train_list: './data/bp4d/total.csv'
 target_domain: 'bp4d'
 target_data_root: '/workspace/dataset'
 fold: 1
-target_train_list: './data/bp4d/train_2f.csv'
-target_test_list: './data/bp4d/test_2f.csv'
+target_train_list: './data/bp4d/train_3f.csv'
+target_test_list: './data/bp4d/test_3f.csv'
 
 input_shape: [3, 224, 224]
 au_list: [1, 2, 4, 6, 7, 10, 12, 14, 15, 17, 23, 24]
