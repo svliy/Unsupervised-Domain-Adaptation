@@ -88,7 +88,10 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
         target_output = model(target_img, text_ori)
         # 损失计算，临时变量
         # source_bce_loss = criterion[0](source_output['logits'].sigmoid(), source_label) # 源域分类损失
-        target_cl_loss = criterion[1](target_output['vision_features'], target_output['text_features'], target_label) # 源域对比损失
+        # 目标域对比损失
+        # pdb.set_trace()
+        pseudo_label =(target_output['logits'].detach().sigmoid() >= 0.5).float()
+        target_cl_loss = criterion[1](target_output['vision_features'], target_output['text_features'], pseudo_label) 
         loss = target_cl_loss# 整体损失
         # backward pass
         loss.backward()
