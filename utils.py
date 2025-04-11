@@ -145,7 +145,6 @@ def DISFA_infolist(list):
     infostr = {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f}  AU6: {:.2f} AU9: {:.2f} AU12: {:.2f}  AU25: {:.2f} AU26: {:.2f} '.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7])}
     return infostr
 
-
 def adjust_learning_rate(optimizer, epoch, epochs, init_lr, iteration, num_iter):
 
     current_iter = iteration + epoch * num_iter
@@ -153,7 +152,6 @@ def adjust_learning_rate(optimizer, epoch, epochs, init_lr, iteration, num_iter)
     lr = init_lr * (1 + cos(pi * current_iter / max_iter)) / 2
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
 
 class PlaceCrop(object):
     """Crops the given PIL.Image at the particular index.
@@ -181,7 +179,6 @@ class PlaceCrop(object):
         th, tw = self.size
         return img.crop((self.start_x, self.start_y, self.start_x + tw, self.start_y + th))
 
-
 class SetFlip(object):
 
     def __init__(self, flip):
@@ -197,7 +194,6 @@ class SetFlip(object):
         if self.flip:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
         return img
-
 
 class image_train(object):
     def __init__(self, img_size=256, crop_size=224):
@@ -221,7 +217,6 @@ class image_train(object):
         img = transform(img)
         return img
 
-
 class image_test(object):
     def __init__(self, img_size=256, crop_size=224):
         self.img_size = img_size
@@ -238,7 +233,6 @@ class image_test(object):
         ])
         img = transform(img)
         return img
-
 
 def load_state_dict(model,path):
     checkpoints = torch.load(path, map_location = torch.device('cpu'))
@@ -268,6 +262,7 @@ def set_seed(seed: int):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def ensure_dir(dir_name):
     if not os.path.exists(dir_name):
@@ -281,7 +276,7 @@ def set_outdir(config):
         outdir = os.path.join(default_outdir, config.exp_name,timestr)
     else:
         outdir = os.path.join(default_outdir, config.exp_name)
-        prefix = str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
+        prefix = str(config.stage)+'_'+str(config.train_or_test)+'_'+str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
         outdir = os.path.join(outdir,prefix)
     ensure_dir(outdir)
     config['outdir'] = outdir
@@ -329,7 +324,7 @@ def set_dataset_info(config):
         dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU7: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU17: {:.2f} AU23: {:.2f} AU24: {:.2f} '.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9],100.*list[10],100.*list[11])}
 
     return dataset_info
-    
+
 if __name__ == '__main__':
     
     print(get_weight(edict({

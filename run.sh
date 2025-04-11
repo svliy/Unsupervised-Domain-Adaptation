@@ -1,4 +1,7 @@
 CUDA_VISIBLE_DEVICES=3 python train.py --config_name bp4d2gft
+CUDA_VISIBLE_DEVICES=3 python train_stage2.py --config_name bp4d2gft
+
+CUDA_VISIBLE_DEVICES=0 python train_for_test.py --config_name bp4d2gft
 
 CUDA_VISIBLE_DEVICES=2 python train_target.py --config_name bp4d2disfa
 CUDA_VISIBLE_DEVICES=1 python train_target.py --config_name bp4d2gft

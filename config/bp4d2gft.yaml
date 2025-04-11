@@ -15,9 +15,13 @@ au_list: [1, 2, 4, 6, 10, 12, 14, 15, 23, 24]
 class_num: 10
 batch_size: 128
 number_works: 8
-seed: 2025
+seed: 2019
 epochs: 15
-lr_init: 0.00001
+lr_init: 0.0001
 optimizer: 'adamw'
 weight_decay: 0.0005
 backbone: 'RN50' # RN50, ViT-B/16
+
+train_or_test: 'train'
+stage: 'two'
+checkpoint_path: '/workspace/projects/uda/Unsupervised-Domain-Adaptation/results/bp4d_gft/train_cross_fold_1_seed_2019_date_2025-04-11_10_14-31_AM/best_model_fold1.pth'

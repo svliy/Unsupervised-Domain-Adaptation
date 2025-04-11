@@ -45,8 +45,8 @@ def set_dataset(config):
 
 def train(epoch, config, model, source_loader, target_loader, criterion, optimizer, scheduler, text_ori):
     # 记录损失
-    loss_source_bce = AverageMeter()
-    loss_source_cl = AverageMeter()
+    # loss_source_bce = AverageMeter()
+    loss_target_cl = AverageMeter()
     loss_all = AverageMeter()
     # 设置模型为train模式
     model.train()
@@ -84,33 +84,35 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
         # zero gradients
         optimizer.zero_grad()
         # forward pass
-        source_output = model(source_img, text_ori)
+        # source_output = model(source_img, text_ori)
+        target_output = model(target_img, text_ori)
         # 损失计算，临时变量
-        source_bce_loss = criterion[0](source_output['logits'].sigmoid(), source_label) # 源域分类损失
-        source_cl_loss = criterion[1](source_output['vision_features'], source_output['text_features'], source_label) # 源域对比损失
-        loss = source_bce_loss + source_cl_loss# 整体损失
+        # source_bce_loss = criterion[0](source_output['logits'].sigmoid(), source_label) # 源域分类损失
+        target_cl_loss = criterion[1](target_output['vision_features'], target_output['text_features'], target_label) # 源域对比损失
+        loss = target_cl_loss# 整体损失
         # backward pass
         loss.backward()
         # update the parameters
         optimizer.step()
         scheduler.step()
         
-        loss_source_bce.update(source_bce_loss.data.item(), config.batch_size)
-        loss_source_cl.update(source_cl_loss.data.item(), config.batch_size)
+        # loss_source_bce.update(source_bce_loss.data.item(), config.batch_size)
+        loss_target_cl.update(target_cl_loss.data.item(), config.batch_size)
         loss_all.update(loss.data.item(), config.batch_size)
         
-        update_list = statistics(source_output['logits'].sigmoid().detach(), source_label.detach(), 0.5)
+        update_list = statistics(target_output['logits'].sigmoid().detach(), target_label.detach(), 0.5)
         statistics_list = update_statistics_list(statistics_list, update_list)
         
         # 损失记录
         if batch_idx == 0 or (batch_idx % display_interval == 0):
-            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{n} | loss: {loss_all.avg:.6f} | source bce loss: {loss_source_bce.avg:.6f} | source cl loss: {loss_source_cl.avg:.6f}')
+            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{n} | loss: {loss_all.avg:.6f} | source cl loss: {loss_target_cl.avg:.6f}')
     mean_f1_score, f1_score_list = calc_f1_score(statistics_list)
     
     return {
         'loss': loss_all.avg,
-        'source_bce_loss': loss_source_bce.avg,
-        'source_cl_loss': loss_source_cl.avg,
+        'source_bce_loss': '',
+        'source_cl_loss': '',
+        'target_cl_loss': loss_target_cl.avg,
         'mean_f1_score': mean_f1_score,
         'f1_score_list': f1_score_list
     }
@@ -160,7 +162,7 @@ if __name__ == '__main__':
     
     # 获取配置
     config = set_config(args)
-    config.stage = 'one'
+    config.stage = 'two'
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
@@ -180,6 +182,9 @@ if __name__ == '__main__':
     
         # 模型
         model = TransferAU(config).cuda()
+        # 加载模型
+        checkpoint = torch.load(config.checkpoint_path)
+        model.load_state_dict(checkpoint['state_dict'])
         # 冻结视觉编码器参数
         logger.info('==> Freeze vision encoder...')
         for name, param in model.named_parameters():
@@ -213,7 +218,7 @@ if __name__ == '__main__':
             
             logger.info('==> Training...')
             train_output = train(epoch, config, model, source_loader, target_loader, criterion, optimizer, scheduler, text_ori)
-            logger.info({'Epoch: {}  train_f1: {:.2f} train_loss: {:.6f}  bce_loss: {:.6f} cl_loss: {:.6f}'.format(epoch, 100.*train_output['mean_f1_score'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'])})
+            logger.info({'Epoch: {}  train_traget_f1: {:.2f} train_loss: {:.6f} cl_loss: {:.6f}'.format(epoch, 100.*train_output['mean_f1_score'], train_output['loss'], train_output['target_cl_loss'])})
             logger.info({'Train F1-score-list:'})
             logger.info(dataset_info(train_output['f1_score_list']))
             
@@ -247,7 +252,7 @@ if __name__ == '__main__':
         model.load_state_dict(checkpoint['state_dict'])
         model.eval()
 
-        pdb.set_trace()
+        # pdb.set_trace()
                 
         # 冻结视觉编码器参数
         logger.info('==> Freeze vision encoder...')

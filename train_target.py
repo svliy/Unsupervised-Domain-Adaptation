@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from model.uda import TransferAU
 from dataset import GeneralData
 from utils import *
-from losses import WeightedAsymmetricLoss
+from losses import WeightedAsymmetricLoss, ContrastiveLossInfoNCE
 
 import pdb
 
@@ -40,6 +40,7 @@ def set_dataset(config):
 def train(epoch, config, model, target_loader, criterion, optimizer, scheduler):
     # 记录损失
     loss_bce = AverageMeter()
+    loss_source_cl = AverageMeter()
     loss_all = AverageMeter()
     # 设置模型为train模式
     model.train()
@@ -60,7 +61,8 @@ def train(epoch, config, model, target_loader, criterion, optimizer, scheduler):
         # forward pass
         output = model(images)
         # 损失计算，临时变量
-        bce_loss = criterion[0](output.sigmoid(), labels) # 源域分类损失
+        bce_loss = criterion[0](output['logits'].sigmoid(), labels) # 源域分类损失
+        source_cl_loss = criterion[1](output['source_logits'], labels) # 源域对比损失
         loss = bce_loss # 整体损失
         # backward pass
         loss.backward()
@@ -69,9 +71,10 @@ def train(epoch, config, model, target_loader, criterion, optimizer, scheduler):
         scheduler.step()
         
         loss_bce.update(bce_loss.data.item(), config.batch_size)
+        loss_source_cl.update(bce_loss.data.item(), config.batch_size)
         loss_all.update(loss.data.item(), config.batch_size)
         
-        update_list = statistics(output.sigmoid().detach(), labels.detach(), 0.5)
+        update_list = statistics(output['logits'].sigmoid().detach(), labels.detach(), 0.5)
         statistics_list = update_statistics_list(statistics_list, update_list)
         
         # 损失记录
@@ -104,11 +107,11 @@ def val(epoch, config, model, val_loader, criterion, optimizer):
             # forward pass
             output = model(images)
             # 损失计算，临时变量
-            bce_loss = criterion[0](output.sigmoid(), labels) # 源域分类损失
+            bce_loss = criterion[0](output['logits'].sigmoid(), labels) # 源域分类损失
             loss = bce_loss # 整体损失
             loss_all.update(loss.data.item(), config.batch_size)
             
-            update_list = statistics(output.sigmoid().detach(), labels.detach(), 0.5)
+            update_list = statistics(output['logits'].sigmoid().detach(), labels.detach(), 0.5)
             statistics_list = update_statistics_list(statistics_list, update_list)
             # 损失记录
             # if batch_idx == 0 or (batch_idx % display_interval == 0):
@@ -153,7 +156,12 @@ if __name__ == '__main__':
 
     params = filter(lambda p: p.requires_grad, model.parameters())
     # 损失函数和优化器
-    criterion = [WeightedAsymmetricLoss(weight=weight.cuda())]
+    source_cl_loss = ContrastiveLossInfoNCE()
+    criterion = [WeightedAsymmetricLoss(weight=weight.cuda()), source_cl_loss]
+    
+    pdb.set_trace()
+    params = params + source_cl_loss.parameters()
+    
     if config.optimizer == 'adamw':
         optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
     elif config.optimizer == 'sgd':
