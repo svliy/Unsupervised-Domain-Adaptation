@@ -2,3 +2,4 @@ results/
 tutorials/
 pytorch_lightning/
 __pycache__/
+model/__pycache__/

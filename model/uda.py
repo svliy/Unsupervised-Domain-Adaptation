@@ -8,6 +8,7 @@ from .clip import clip
 from .graph import GNN
 from .description import describe_au
 from .transformers_encoder.transformer import TransformerEncoder as CrossAttention
+from .losses import WeightedAsymmetricLoss, ContrastiveLossInfoNCE
 
 class TextEncoder(nn.Module):
     def __init__(self, clip_model):
@@ -167,6 +168,22 @@ class TransferAU(nn.Module):
             'vision_features': v_f_final,
             "text_features": texts_ori_f,
         }
+
+
+# class Trainer(nn.Module):
+#     def __init__(self, config, weight) -> None:
+#         super().__init__()
+#         self.config = config
+#         self.model = TransferAU(config)
+#         self.source_bce_loss = WeightedAsymmetricLoss(weight=weight.cuda())
+#         self.source_cl_loss = ContrastiveLossInfoNCE()
+#         self.target_cl_loss = ContrastiveLossInfoNCE()
+        
+#     def forward(self, x, texts_ori=None):
+#         return self.model(x, texts_ori)
+
+
+
 
 if __name__ == "__main__":
     model = TransferAU()

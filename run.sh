@@ -1,8 +1,13 @@
+# gft ---> bp4d
+
+# cross: stage 1
+CUDA_VISIBLE_DEVICES=1 python train_stage1.py --config_name gft2bp4d_stage1
+
 # bp4d ---> gft
 # source
 
 # cross: stage 1
-CUDA_VISIBLE_DEVICES=1 python train.py --config_name bp4d2gft
+CUDA_VISIBLE_DEVICES=1 python train_stage1.py --config_name bp4d2gft
 # cross: stage 2
 CUDA_VISIBLE_DEVICES=1 python train_stage2.py --config_name bp4d2gft
 # target

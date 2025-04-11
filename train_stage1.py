@@ -88,6 +88,9 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
         # 损失计算，临时变量
         source_bce_loss = criterion[0](source_output['logits'].sigmoid(), source_label) # 源域分类损失
         source_cl_loss = criterion[1](source_output['vision_features'], source_output['text_features'], source_label) # 源域对比损失
+        
+        source_cl_loss = source_cl_loss * config.source_cl_loss_weight
+        
         loss = source_bce_loss + source_cl_loss# 整体损失
         # backward pass
         loss.backward()
@@ -160,24 +163,22 @@ if __name__ == '__main__':
     
     # 获取配置
     config = set_config(args)
-    config.stage = 'one'
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
     dataset_info = set_dataset_info(config)
     
     # 构造数据集
-    logger.info("********Cross********")
+    logger.info(f"********Cross: {config.exp_name}********")
     source_loader, target_loader, val_loader = set_dataset(config)
+    
     # 获取weight
     weight = get_weight(config.source_train_list, config.au_list)
     logger.info(f"Weight: {weight}")
     
-    
     if config.train_or_test == 'train':
         # 训练模式
         logger.info("********Train********")
-    
         # 模型
         model = TransferAU(config).cuda()
         # 冻结视觉编码器参数
@@ -189,8 +190,9 @@ if __name__ == '__main__':
         params = filter(lambda p: p.requires_grad, model.parameters())
         
         # 损失函数和优化器
+        source_bce_loss = WeightedAsymmetricLoss(weight=weight.cuda())
         source_cl_loss = ContrastiveLossInfoNCE()
-        criterion = [WeightedAsymmetricLoss(weight=weight.cuda()), source_cl_loss]
+        criterion = [source_bce_loss, source_cl_loss]
         
         params = list(params) + list(source_cl_loss.parameters())
         
@@ -231,6 +233,7 @@ if __name__ == '__main__':
                     'epoch': epoch,
                     'state_dict': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
+                    'source_cl_state_dict': source_cl_loss.state_dict(),
                 }
                 torch.save(checkpoint, os.path.join(config['outdir'], 'best_model_fold' + str(config.fold) + '.pth'))
             torch.save(checkpoint, os.path.join(config['outdir'], 'epoch_' + str(epoch) + '_model_fold' + str(config.fold) + '.pth'))
