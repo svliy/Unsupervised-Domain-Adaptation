@@ -34,7 +34,7 @@ def set_dataset(config):
     source_loader = DataLoader(source_dataset, shuffle=True, drop_last = True,
                                batch_size=config.batch_size,
                                num_workers=config.number_works)
-    target_loader = DataLoader(target_dataset, shuffle=True, drop_last = True,
+    target_loader = DataLoader(target_dataset, shuffle=False, drop_last = False,
                             batch_size=config.batch_size,
                             num_workers=config.number_works)
     val_loader = DataLoader(val_dataset, shuffle=False, drop_last = False,
@@ -163,6 +163,7 @@ if __name__ == '__main__':
     
     # 获取配置
     config = set_config(args)
+    config.stage = config.stage + 'pseudo_label'
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
@@ -176,109 +177,46 @@ if __name__ == '__main__':
     weight = get_weight(config.source_train_list, config.au_list)
     logger.info(f"Weight: {weight}")
     logger.info(f"!!!cuda!!!: {weight.cuda().device}")
-    if config.train_or_test == 'train':
-        # 训练模式
-        logger.info("********Train********")
-        # 模型
-        model = TransferAU(config).cuda()
-        # 冻结视觉编码器参数
-        logger.info('==> Freeze vision encoder...')
-        for name, param in model.named_parameters():
-            if 'vision_encoder' in name or 'text_encoder' in name:
-                param.requires_grad = False
-
-        params = filter(lambda p: p.requires_grad, model.parameters())
-        
-        # 损失函数和优化器
-        source_bce_loss = WeightedAsymmetricLoss(weight=weight.cuda())
-        source_cl_loss = ContrastiveLossInfoNCE()
-        criterion = [source_bce_loss, source_cl_loss]
-        
-        params = list(params) + list(source_cl_loss.parameters())
-        
-        if config.optimizer == 'adamw':
-            optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
-        # 学习率调度器
-        n = min(len(source_loader), len(target_loader))
-        iterations_per_epoch = math.ceil(n)
-        total_iterations = iterations_per_epoch * config.epochs
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iterations)
-        
-        # Train and val loop    
-        best_f1 = 0
-        best_epoch = 0
-        # get text
-        text_ori = describe_au(config.au_list)
-        for epoch in range(1, config.epochs + 1):
-            lr = optimizer.param_groups[0]['lr']
-            logger.info("Epoch: [{} | {} LR: {} ]".format(epoch, config.epochs, lr))
-            
-            logger.info('==> Training...')
-            train_output = train(epoch, config, model, source_loader, target_loader, criterion, optimizer, scheduler, text_ori)
-            logger.info({'Epoch: {}  train_f1: {:.2f} train_loss: {:.6f}  bce_loss: {:.6f} cl_loss: {:.6f}'.format(epoch, 100.*train_output['mean_f1_score'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'])})
-            logger.info({'Train F1-score-list:'})
-            logger.info(dataset_info(train_output['f1_score_list']))
-            
-            logger.info('==> Validation...')
-            val_output = val(epoch, config, model, val_loader, criterion, optimizer, text_ori)
-            logger.info({'Epoch: {}  test_f1: {:.2f} test_loss: {:.6f}'.format(epoch, 100.*val_output['mean_f1_score'], val_output['loss'])})
-            logger.info({'Val F1-score-list:'})
-            logger.info(dataset_info(val_output['f1_score_list']))
-
-            current_f1 = val_output['mean_f1_score']
-            if current_f1 > best_f1:
-                best_f1 = current_f1
-                best_epoch = epoch
-                checkpoint = {
-                    'epoch': epoch,
-                    'state_dict': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'source_cl_state_dict': source_cl_loss.state_dict(),
-                }
-                torch.save(checkpoint, os.path.join(config['outdir'], 'best_model_fold' + str(config.fold) + '.pth'))
-            torch.save(checkpoint, os.path.join(config['outdir'], 'epoch_' + str(epoch) + '_model_fold' + str(config.fold) + '.pth'))
-            logger.info(f"Best f1: {best_f1} at epoch {best_epoch}")
     
-    elif config.train_or_test == 'test':
-        # 测试模式
-        logger.info("********Test********")
-        # 模型
-        # pdb.set_trace()
-        model = TransferAU(config).cuda()
-        # 加载模型
-        checkpoint = torch.load(config.checkpoint_path)
-        model.load_state_dict(checkpoint['state_dict'])
-        model.eval()
+    # 测试模式
+    logger.info("********伪标签生成********")
+    # 模型
+    # pdb.set_trace()
+    model = TransferAU(config).cuda()
+    # 加载模型
+    checkpoint = torch.load(config.checkpoint_path)
+    model.load_state_dict(checkpoint['state_dict'])
+    model.eval()
 
-        # 冻结视觉编码器参数
-        logger.info('==> Freeze vision encoder...')
-        for name, param in model.named_parameters():
-            param.requires_grad = False
+    # 冻结视觉编码器参数
+    logger.info('==> Freeze vision encoder...')
+    for name, param in model.named_parameters():
+        param.requires_grad = False
 
-        params = filter(lambda p: p.requires_grad, model.parameters())
+    params = filter(lambda p: p.requires_grad, model.parameters())
+    
+    # 损失函数和优化器
+    source_cl_loss = ContrastiveLossInfoNCE()
+    criterion = [WeightedAsymmetricLoss(weight=weight.cuda()), source_cl_loss]
+    
+    params = list(params) + list(source_cl_loss.parameters())
+    
+    if config.optimizer == 'adamw':
+        optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
+    # 学习率调度器
+    n = min(len(source_loader), len(target_loader))
+    iterations_per_epoch = math.ceil(n)
+    total_iterations = iterations_per_epoch * config.epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iterations)
+    
+    # Train and val loop    
+    best_f1 = 0
+    best_epoch = 0
+    # get text
+    text_ori = describe_au(config.au_list)
         
-        # 损失函数和优化器
-        source_cl_loss = ContrastiveLossInfoNCE()
-        criterion = [WeightedAsymmetricLoss(weight=weight.cuda()), source_cl_loss]
-        
-        params = list(params) + list(source_cl_loss.parameters())
-        
-        if config.optimizer == 'adamw':
-            optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
-        # 学习率调度器
-        n = min(len(source_loader), len(target_loader))
-        iterations_per_epoch = math.ceil(n)
-        total_iterations = iterations_per_epoch * config.epochs
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_iterations)
-        
-        # Train and val loop    
-        best_f1 = 0
-        best_epoch = 0
-        # get text
-        text_ori = describe_au(config.au_list)
-            
-        logger.info('==> Validation...')
-        val_output = val(9999, config, model, val_loader, criterion, optimizer, text_ori)
-        logger.info({'Epoch: {}  test_f1: {:.2f} test_loss: {:.6f}'.format(9999, 100.*val_output['mean_f1_score'], val_output['loss'])})
-        logger.info({'Val F1-score-list:'})
-        logger.info(dataset_info(val_output['f1_score_list']))
+    logger.info('==> Validation...')
+    val_output = val(9999, config, model, target_loader, criterion, optimizer, text_ori)
+    logger.info({'Epoch: {}  test_f1: {:.2f} test_loss: {:.6f}'.format(9999, 100.*val_output['mean_f1_score'], val_output['loss'])})
+    logger.info({'Val F1-score-list:'})
+    logger.info(dataset_info(val_output['f1_score_list']))

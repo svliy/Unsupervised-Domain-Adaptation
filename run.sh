@@ -2,6 +2,10 @@
 
 # cross: stage 1
 CUDA_VISIBLE_DEVICES=1 python train_stage1.py --config_name gft2bp4d_stage1
+# cross: stage 2
+CUDA_VISIBLE_DEVICES=1 python train_stage2.py --config_name gft2bp4d_stage2
+# pseudo label
+CUDA_VISIBLE_DEVICES=1 python train_stage1_pseudo_label.py --config_name gft2bp4d_stage1
 
 # bp4d ---> gft
 # source

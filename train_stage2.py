@@ -90,8 +90,8 @@ def train(epoch, config, model, source_loader, target_loader, criterion, optimiz
         # source_bce_loss = criterion[0](source_output['logits'].sigmoid(), source_label) # 源域分类损失
         # 目标域对比损失
         # pdb.set_trace()
-        pseudo_label =(target_output['logits'].detach().sigmoid() >= 0.5).float()
-        target_cl_loss = criterion[1](target_output['vision_features'], target_output['text_features'], pseudo_label) 
+        # pseudo_label =(target_output['logits'].detach().sigmoid() >= 0.5).float()
+        target_cl_loss = criterion[0](target_output['vision_features'], target_output['text_features'], target_label) 
         loss = target_cl_loss# 整体损失
         # backward pass
         loss.backward()
@@ -136,13 +136,13 @@ def val(epoch, config, model, val_loader, criterion, optimizer, text_ori):
             # zero gradients
             optimizer.zero_grad()
             # forward pass
-            output = model(images, text_ori)
+            target_output = model(images, text_ori)
             # 损失计算，临时变量
-            bce_loss = criterion[0](output['logits'].sigmoid(), labels) # 源域分类损失
-            loss = bce_loss # 整体损失
+            target_cl_loss = criterion[0](target_output['vision_features'], target_output['text_features'], labels) # 源域分类损失
+            loss = target_cl_loss # 整体损失
             loss_all.update(loss.data.item(), config.batch_size)
             
-            update_list = statistics(output['logits'].sigmoid().detach(), labels.detach(), 0.5)
+            update_list = statistics(target_output['logits'].sigmoid().detach(), labels.detach(), 0.5)
             statistics_list = update_statistics_list(statistics_list, update_list)
             # 损失记录
             # if batch_idx == 0 or (batch_idx % display_interval == 0):
@@ -153,7 +153,8 @@ def val(epoch, config, model, val_loader, criterion, optimizer, text_ori):
     return {
         'loss': loss_all.avg,
         'mean_f1_score': mean_f1_score,
-        'f1_score_list': f1_score_list
+        'f1_score_list': f1_score_list,
+        'target_cl_loss': target_cl_loss
     }
 
 if __name__ == '__main__':
@@ -177,8 +178,7 @@ if __name__ == '__main__':
     # 获取weight
     weight = get_weight(config.source_train_list, config.au_list)
     logger.info(f"Weight: {weight}")
-    
-    
+    logger.info(f"!!!cuda!!!: {weight.cuda().device}")
     if config.train_or_test == 'train':
         # 训练模式
         logger.info("********Train********")
@@ -197,10 +197,10 @@ if __name__ == '__main__':
         params = filter(lambda p: p.requires_grad, model.parameters())
         
         # 损失函数和优化器
-        source_cl_loss = ContrastiveLossInfoNCE()
-        criterion = [WeightedAsymmetricLoss(weight=weight.cuda()), source_cl_loss]
+        target_cl_loss = ContrastiveLossInfoNCE()
+        criterion = [target_cl_loss]
         
-        params = list(params) + list(source_cl_loss.parameters())
+        params = list(params) + list(target_cl_loss.parameters())
         
         if config.optimizer == 'adamw':
             optimizer = optim.AdamW(params, lr=config.lr_init, weight_decay=config.weight_decay)
@@ -227,7 +227,7 @@ if __name__ == '__main__':
             
             logger.info('==> Validation...')
             val_output = val(epoch, config, model, val_loader, criterion, optimizer, text_ori)
-            logger.info({'Epoch: {}  test_f1: {:.2f} test_loss: {:.6f}'.format(epoch, 100.*val_output['mean_f1_score'], val_output['loss'])})
+            logger.info({'Epoch: {}  test_f1: {:.2f} test_loss: {:.6f}'.format(epoch, 100.*val_output['mean_f1_score'], val_output['loss'], val_output['target_cl_loss'])})
             logger.info({'Val F1-score-list:'})
             logger.info(dataset_info(val_output['f1_score_list']))
 

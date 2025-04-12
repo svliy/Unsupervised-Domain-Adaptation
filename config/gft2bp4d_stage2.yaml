@@ -1,7 +1,7 @@
 # experiment name
 exp_name: 'gft2bp4d'
-stage: 'one'
-train_or_test: 'test'
+stage: 'two'
+train_or_test: 'train'
 checkpoint_path: '/workspace/projects/uda/Unsupervised-Domain-Adaptation/results/gft2bp4d/one_train_cross_fold_2_seed_2019_date_2025-04-11_05_03-51_PM/best_model_fold2.pth'
 # source domain
 source_domain: 'gft'
@@ -21,7 +21,7 @@ batch_size: 128
 number_works: 8
 seed: 2019
 epochs: 15
-lr_init: 0.0001
+lr_init: 0.00001
 optimizer: 'adamw'
 weight_decay: 0.0005
 backbone: 'RN50' # RN50, ViT-B/16
