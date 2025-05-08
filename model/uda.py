@@ -139,11 +139,12 @@ class TransferAU(nn.Module):
         texts_ori_ids = clip.tokenize(texts_ori).cuda()
         texts_ori_f = self.text_encoder(texts_ori_ids) # [10, 1024]
         texts_ori_f = self.text_transform(texts_ori_f) # [10, 512]
-        texts_ori_f_cross = texts_ori_f.unsqueeze(0).repeat(B*4, 1, 1) # [128*4, 10, 512]
-        texts_ori_f_cross = texts_ori_f_cross.permute(1, 0, 2).contiguous() # [10, 128*4, 512]
-        inter_f = self.cross_attention(v_f_sets, texts_ori_f_cross, texts_ori_f_cross) # [49, 128*4, 512]
+        # texts_ori_f_cross = texts_ori_f.unsqueeze(0).repeat(B*4, 1, 1) # [128*4, 10, 512]
+        # texts_ori_f_cross = texts_ori_f_cross.permute(1, 0, 2).contiguous() # [10, 128*4, 512]
+        # inter_f = self.cross_attention(v_f_sets, texts_ori_f_cross, texts_ori_f_cross) # [49, 128*4, 512]
         # pdb.set_trace()
-        inter_f = inter_f + v_f_sets # [49, 128*4, 512]
+        # inter_f = inter_f + v_f_sets # [49, 128*4, 512]
+        inter_f = v_f_sets
         
         # 构造图神经网络
         g_nodes = inter_f.permute(1, 0, 2).contiguous().view(B, 4, -1, self.vision_dim) # [128, 4, 49, 512]

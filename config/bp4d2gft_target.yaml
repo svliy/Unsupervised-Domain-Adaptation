@@ -1,0 +1,47 @@
+# Experiment Setup
+exp_name: 'bp4d2gft'
+seed: 1000
+stage: 'one'
+train_or_test: 'train'
+checkpoint_path: ''
+
+# Dataset Configuration
+## Source Domain
+source_domain: 'bp4d'
+source_data_root: '/mnt/sda/yiren/data'
+source_train_list: './data/bp4d/total.csv'
+# source_train_list: './data/bp4d/total_train.csv'
+source_val_list: './data/bp4d/total_val.csv'
+## Target Domain
+fold: 1
+target_domain: 'gft'
+target_data_root: '/mnt/sda/yiren/data'
+target_train_list: './data/gft/train_1f.csv'
+target_test_list: './data/gft/test_1f.csv'
+## General Data Parameters
+input_shape: [3, 224, 224]
+au_list: [1, 2, 4, 6, 10, 12, 14, 15, 23, 24]
+class_num: 10
+
+# Training Parameters
+batch_size: 256
+number_works: 8
+epochs: 20
+optimizer: 'sgd'
+lr_init: 0.001
+momentum: 0.9
+weight_decay: 0.0005
+stop: 0
+early_stop: 5
+target_cl_loss_weight: 0.1
+
+# Model Parameters
+backbone: 'RN50' # RN50, ViT-B/16
+drop_rate: 0.3
+neighbor_num: 5
+
+# CoOp
+n_ctx: 16
+ctx_init: ''
+csc: False # class-specific context (False or True)
+ctp: 'end' # class token position (end or middle)

@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 from math import cos, pi
+from copy import deepcopy
 from datetime import datetime
 from easydict import EasyDict as edict
 
@@ -248,9 +249,9 @@ def load_state_dict(model,path):
     return model
 
 def set_config(args):
-    with open(f'config/{args.config_name}.yaml', 'r') as f:
-        config = edict(yaml.safe_load(f))
-        config.config_name = args.config_name
+    with open(f'config/{args.config_file}.yaml', 'r') as f:
+        config = edict(yaml.safe_load(f)) # 加载配置文件
+        config.config_file = args.config_file # 将命令行参数赋值给配置对象
         config.mode = args.mode
     return config
 
@@ -264,23 +265,23 @@ def set_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
 def ensure_dir(dir_name):
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
         logging.info('{} is created'.format(dir_name))
 
+
 def set_outdir(config):
     default_outdir = 'results'
-    if 'timedir' in config:
-        timestr = datetime.now().strftime('%d-%m-%Y_%I_%M-%S_%p')
-        outdir = os.path.join(default_outdir, config.exp_name,timestr)
-    else:
-        outdir = os.path.join(default_outdir, config.exp_name)
-        prefix = str(config.stage)+'_'+str(config.train_or_test)+'_'+str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
-        outdir = os.path.join(outdir,prefix)
+    # 设置输出路径
+    # pdb.set_trace()
+    outdir = os.path.join(default_outdir, config.exp_name)
+    prefix = str(config.stage)+'_'+str(config.train_or_test)+'_'+str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
+    outdir = os.path.join(outdir, prefix)
     ensure_dir(outdir)
     config['outdir'] = outdir
-    shutil.copyfile(f"./config/{config.config_name}.yaml", os.path.join(outdir, f'{config.config_name}.yaml'))
+    shutil.copyfile(f"./config/{config.config_file}.yaml", os.path.join(outdir, f'{config.config_file}.yaml'))
 
     return config
 
@@ -305,25 +306,76 @@ def set_logger(config):
 
 def get_weight(scv_file_path, au_list):
     df = pd.read_csv(scv_file_path)
-    au_columns = ['AU'+str(au_name) for au_name in au_list]
-    # 过滤无需关注的列
-    au_data = df[au_columns].to_numpy()
     
-    AUoccur_rate = np.mean(au_data > 0, axis=0)  # 使用 NumPy 计算平均值
+    au_columns = ['AU'+str(au_name) for au_name in au_list]
+    au_data = df[au_columns].to_numpy() # 过滤无需关注的列
+    
+    n = len(au_data)
+    au_occur = np.sum(au_data > 0, axis=0) # [au_nums]
+    # weight
+    AUoccur_rate = au_occur / n
     AU_weight = 1.0 / AUoccur_rate
     AU_weight = AU_weight / np.sum(AU_weight) * AU_weight.shape[0]
     
-    return torch.tensor(AU_weight)
+    pos_weight = (n - au_occur) / au_occur
+    
+    return torch.tensor(AU_weight), torch.tensor(pos_weight)
 
 def set_dataset_info(config):
-    if config.exp_name in ["bp4d2disfa"]:
+    
+    if config.exp_name in ["bp4d2disfa", 'disfa2bp4d']:
         dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU12: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4])}
-    elif config.exp_name in ["bp4d2gft", "gft2bp4d"]:
+    elif config.exp_name in ["bp4d2gft", "gft2bp4d"]: # bp4d, gft
         dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU23: {:.2f} AU24: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9])}        
-    elif config.exp_name == "bp4d":
-        dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU7: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU17: {:.2f} AU23: {:.2f} AU24: {:.2f} '.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9],100.*list[10],100.*list[11])}
-
     return dataset_info
+
+def enable_dropout(model):
+    for m in model.modules():
+        if m.__class__.__name__.startswith('Dropout'):
+            m.train()
+
+class ModelEma(torch.nn.Module):
+    def __init__(self, model, decay=0.9997, device=None):
+        super(ModelEma, self).__init__()
+        # make a copy of the model for accumulating moving average of weights
+        self.module = deepcopy(model)
+        self.module.eval()
+
+        # import ipdb; ipdb.set_trace()
+
+        self.decay = decay
+        self.device = device  # perform ema on different device from model if set
+        if self.device is not None:
+            self.module.to(device=device)
+            
+        self.module.vision_features = {}
+        self.module.image_encoder.layer1.register_forward_hook(self.get_activation('layer1'))
+        self.module.image_encoder.layer2.register_forward_hook(self.get_activation('layer2'))
+        self.module.image_encoder.layer3.register_forward_hook(self.get_activation('layer3'))
+        self.module.image_encoder.layer4.register_forward_hook(self.get_activation('layer4'))
+
+    def get_activation(self, name):
+        def hook(model, input, output):
+            self.module.vision_features[name] = output
+        return hook
+    
+    def _update(self, model, update_fn):
+        with torch.no_grad():
+            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                if self.device is not None:
+                    model_v = model_v.to(device=self.device)
+                ema_v.copy_(update_fn(ema_v, model_v))
+
+    def update(self, model):
+        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+
+    def set(self, model):
+        self._update(model, update_fn=lambda e, m: m)
+    
+    def forward(self, image, text=None):
+        
+        return self.module(image, text)
+
 
 if __name__ == '__main__':
     
@@ -331,3 +383,4 @@ if __name__ == '__main__':
         'source_train_list': '/workspace/projects/uda/Unsupervised-Domain-Adaptation/data/bp4d/train_1f.csv',
         'au_list': [1, 2, 4, 6, 7, 10, 12, 14, 15, 17, 23, 24]
     })))
+    

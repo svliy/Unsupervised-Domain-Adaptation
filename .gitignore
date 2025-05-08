@@ -1,4 +1,6 @@
 results/
+results_tmp/
+results_tmpp2/
 tutorials/
 pytorch_lightning/
 __pycache__/

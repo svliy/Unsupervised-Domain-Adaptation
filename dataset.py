@@ -8,26 +8,55 @@ import os
 import csv
 import pdb
 
+
+class PseudoLabelDataset(Dataset):
+    
+    def __init__(self, images_list, truth_labels, pseudo_labels, config=None):
+        
+        self.config = config
+        self.images_list = images_list
+        self.truth_labels = truth_labels
+        self.pseudo_labels = pseudo_labels
+        normalize = T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                                std=[0.26862954, 0.26130258, 0.27577711]) # CLIP
+        self.transforms = T.Compose([
+            T.RandomResizedCrop((224, 224), (0.9, 1.0)),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            normalize
+        ])
+    
+    def __len__(self):
+        return len(self.images_list)
+    
+    def __getitem__(self,index):
+        img_name = self.images_list[index]
+        img = Image.open(img_name).convert('RGB')
+        img = self.transforms(img)
+        truth_label = self.truth_labels[index]
+        pseudo_label = self.pseudo_labels[index]
+        return img, truth_label, pseudo_label, img_name
+
 class GeneralData(Dataset):
     def __init__(self, root, data_list_file, config, phase = "train"):
         self.input_shape = config.input_shape
         self.au_list = config.au_list
         self.phase = phase
-        
         self.root = root
         self.image_list, self.label_list = self.read_file(root, data_list_file)
 
         # normalize = T.Normalize([0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        normalize = T.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)) # CLIP
+        normalize = T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                                std=[0.26862954, 0.26130258, 0.27577711]) # CLIP
         
         # 不同的阶段使用不同的数据增强策略
         if self.phase == 'train':
             self.transforms = T.Compose([
                 # T.Resize((self.input_shape[1] + 24,self.input_shape[1] + 24)),
-                T.RandomResizedCrop((self.input_shape[1], self.input_shape[2]), (0.9, 1.0)),
                 # T.RandomRotation(10),
                 # T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
                 # T.RandomCrop(self.input_shape[1:],pad_if_needed=True),
+                T.RandomResizedCrop((self.input_shape[1], self.input_shape[2]), (0.9, 1.0)),
                 T.RandomHorizontalFlip(),
                 T.ToTensor(),
                 normalize
@@ -51,7 +80,7 @@ class GeneralData(Dataset):
         current_lbl = np.array(self.label_list[index])
         current_lbl = torch.from_numpy(current_lbl)
 
-        return img, current_lbl
+        return img, current_lbl, img_name
 
     def read_file(self, prefix, file_name):
         img_list = []
