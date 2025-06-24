@@ -1,39 +1,39 @@
 # Experiment Setup
-exp_name: 'gft2bp4d'
+exp_name: 'disfa2bp4d'
 seed: 1000
 stage: 'two'
 train_or_test: 'train'
-checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results/gft2bp4d/one_train_cross_fold_1_seed_1000_date_2025-05-08_09_15-49_AM/E3_model_fold1.pth'
+checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results/disfa2bp4d/one_train_cross_fold_2_seed_1000_date_2025-05-09_08_18-45_PM/E4_model_fold2.pth'
 
 # Dataset Configuration
 ## Source Domain
-source_domain: 'gft'
-source_data_root: '/mnt/sda/yiren/data'
-# source_train_list: './data/bp4d/total_train.csv'
-source_train_list: './data/gft/total.csv'
-source_val_list: './data/gft/total_val.csv'
+source_domain: 'disfa'
+source_data_root: '/mnt/sda/yiren/data/DISFA/Images_left'
+source_train_list: './data/disfa/total.csv'
 ## Target Domain
-fold: 1
+fold: 2
 target_domain: 'bp4d'
 target_data_root: '/mnt/sda/yiren/data'
-target_train_list: './data/bp4d/train_1f.csv'
-target_test_list: './data/bp4d/test_1f.csv'
+target_train_list: './data/bp4d/train_2f.csv'
+target_test_list: './data/bp4d/test_2f.csv'
 ## General Data Parameters
 input_shape: [3, 224, 224]
-au_list: [1, 2, 4, 6, 10, 12, 14, 15, 23, 24]
-class_num: 10
+au_list: [1, 2, 4, 6, 12]
+class_num: 5
 
 # Training Parameters
 batch_size: 256
 number_works: 8
-epochs: 20
+epochs: 15
 optimizer: 'sgd'
 lr_init: 0.001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
 early_stop: 5
+source_cl_loss_weight: 0.1
 target_cl_loss_weight: 0.1
+transfer_loss_weight: 1
 
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16
@@ -48,10 +48,6 @@ ctp: 'end' # class token position (end or middle)
 
 # pseudo label
 f_pass: 5
-tau_p: 0.9 
-kappa_p: 0.005
+tau_p: 0.5
+kappa_p: 0.10
 ema_decay: 0.999
-ema_step: 
-
-tau_n: 0.005
-kappa_n: 0.005

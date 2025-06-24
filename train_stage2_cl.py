@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from model.transfer_au import TransferNet
 from dataset import GeneralData, PseudoLabelDataset
 from utils import *
-from loss import ContrastiveLossForSource
+from loss import ContrastiveLossForSource, ContrastiveLossUnlabelled
 from description import describe_au
 
 import pdb
@@ -70,14 +70,14 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, em
     
     statistics_list = None
     source_loader = dataloaders['source_train']
-    target_loader = dataloaders['pseudo_label_loader']
-    # target_loader = dataloaders['target_train']
+    # target_loader = dataloaders['pseudo_label_loader']
+    target_loader = dataloaders['target_train']
     
     source_train_iter = iter(source_loader)
     
     len_dataloader = len(target_loader)
     
-    for batch_idx, (target_img, target_truth_label, target_pseudo_label, target_img_name) in enumerate(tqdm(target_loader)):
+    for batch_idx, (target_img, target_truth_label, target_img_name) in enumerate(tqdm(target_loader)):
         # --- 获取源域数据 ---
         try:
             source_img, source_label, source_img_name = next(source_train_iter)
@@ -86,16 +86,18 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, em
             source_train_iter = iter(source_loader)
             source_img, source_label, source_img_name = next(source_train_iter)
         if torch.cuda.is_available():
-            target_img, target_truth_label, target_pseudo_label = target_img.cuda(), target_truth_label.float().cuda(), target_pseudo_label.float().cuda()
+            # target_img, target_truth_label, target_pseudo_label = target_img.cuda(), target_truth_label.float().cuda(), target_pseudo_label.float().cuda()
+            target_img, target_truth_label = target_img.cuda(), target_truth_label.float().cuda()
             source_img, source_label = source_img.cuda(), source_label.float().cuda()
         
         optimizer.zero_grad()
         source_output = model(source_img)
         target_output = model(target_img)
         
-        source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
-        target_cl_loss = criterion['target_cl_loss'](target_output['au_vision_features'], target_output['au_text_features'], target_pseudo_label) # 目标域对比学习损失        
-        loss = source_bce_loss + config.target_cl_loss_weight*target_cl_loss # 整体损失
+        source_bce_loss = torch.tensor(0.0).cuda()
+        # source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
+        target_cl_loss = criterion['target_cl_loss'](target_output['au_vision_features'], target_output['au_text_features']) # 目标域对比学习损失        
+        loss = source_bce_loss + target_cl_loss # 整体损失
         loss.backward()
         optimizer.step()
         ema_model.update(model) # 更新模型参数
@@ -227,7 +229,7 @@ def pseudo_label(epoch, config, dataloaders, model, ema_model):
             completely_correct_samples_mask = np.all(pseudo_labels == truth_labels, axis=1)
             num_completely_correct_samples = np.sum(completely_correct_samples_mask)
             logger.info(f"Epoch[{epoch}]: Number of completelpy correct samples: {num_completely_correct_samples}")
-            logger.info(f"Epoch[{epoch}]: Proportion of nvidicompletely correct samples: {num_completely_correct_samples/len(pseudo_labels)}")
+            logger.info(f"Epoch[{epoch}]: Proportion of completely correct samples: {num_completely_correct_samples/len(pseudo_labels)}")
             # 每个AU中预测的准确度
             correct_predictions = (pseudo_labels == truth_labels).astype(np.float32) # (108538, 10)
             accuracy_per_au = np.mean(correct_predictions, axis=0) # (10,)
@@ -244,29 +246,25 @@ def pseudo_label(epoch, config, dataloaders, model, ema_model):
                 logger.info(f"kappa_p: {k_p} | tau_p: {t_p}")
                 _, acc_item = get_acc_pseudo_label(k_p, t_p)
                 acc_matrix[i][j] = acc_item
-                
+        
+        
         pseudo_labels, _ = get_acc_pseudo_label(config.kappa_p, config.tau_p)
+        pdb.set_trace()
+        np.save(f"{config['outdir']}/acc_matrix.npy", acc_matrix)
+        np.save(f"{config['outdir']}/out_std_list.npy", out_std_list)
+        np.save(f"{config['outdir']}/out_prob_list.npy", out_prob_list)
+        np.save(f"{config['outdir']}/images_list.npy", images_list)
+        np.save(f"{config['outdir']}/truth_labels.npy", truth_labels)
+        np.save(f"{config['outdir']}/pseudo_labels.npy", pseudo_labels)
+        
         pseudo_label_dataset = PseudoLabelDataset(images_list, truth_labels, pseudo_labels, config)
         pseudo_label_loader = DataLoader(pseudo_label_dataset,
                                          shuffle=False,
                                          drop_last = False,
                                          batch_size=config.batch_size,
                                          num_workers=config.number_works)
-        file_path_npy = f"{config['outdir']}/acc_matrix.npy"
-        np.save(file_path_npy, acc_matrix)
+        
         # pdb.set_trace()
-        # 预测为真的样本中，确实为真的样本占比:
-        # np.max(out_std_list)
-        # pseudo_labels, _ = get_acc_pseudo_label(0.02, 0.5)
-        # double_truth = truth_labels*pseudo_labels # [86731, 5]
-        # truth_labels.sum(0) # [5] [ 4294.,  3521., 13352.,  5278., 10292.]
-        # pseudo_labels.sum(0) # [5] [ 227,  344, 3258,    0,    0]
-        # double_truth.sum(0) # [5] [ 221.,  316., 2907.,    0.,    0.]
-        # double_truth.sum(0) / pseudo_labels.sum(0)
-        
-        # np.sum(truth_labels)
-        # np.sum(pseudo_labels)
-        
         # if True:
         #     # 每个类别正确预测为正例的数量 (真阳性 TP)。
         #     n_correct_pos = (truth_labels*pseudo_labels).sum(0)
@@ -333,7 +331,7 @@ def main(args):
         criterion = {
             'source_bce_loss': nn.BCEWithLogitsLoss(weight=source_weight.float().cuda(), pos_weight=source_pos_weight.float().cuda()),
             'target_bce_loss': nn.BCEWithLogitsLoss(),
-            'target_cl_loss': ContrastiveLossForSource(initial_temperature=0.07),
+            'target_cl_loss': ContrastiveLossUnlabelled(initial_temperature=0.07),
             # 'mae_loss': nn.L1Loss(),
         }
         
@@ -377,8 +375,8 @@ def main(args):
             logger.info("Epoch: [{:2d}/{:2d}], lr: {}".format(epoch, config.epochs, lr))
             
             logger.info('==> Pseudo labeling...')
-            pseudo_label_loader = pseudo_label(epoch, config, dataloaders, model, ema_m.module)
-            dataloaders['pseudo_label_loader'] = pseudo_label_loader
+            # pseudo_label_loader = pseudo_label(epoch, config, dataloaders, model, ema_m.module)
+            # dataloaders['pseudo_label_loader'] = pseudo_label_loader
             
             logger.info('==> Training...')
             train_output = train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, ema_m)

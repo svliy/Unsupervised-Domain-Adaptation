@@ -27,7 +27,7 @@ class MonaOp(nn.Module):
         return identity + x
 
 class Mona(nn.Module):
-    
+    # [B, L, C]
     # [256, 197, 768]
     def __init__(self, in_dim, inter_dim=64, factor=4):
         super().__init__()
@@ -63,15 +63,63 @@ class Mona(nn.Module):
 
         return identity + project2
     
+class MonaRes(nn.Module):
+    # [B, L, C]
+    # [256, 197, 768]
+    def __init__(self, in_dim, inter_dim=64, factor=4):
+        super().__init__()
+
+        self.project1 = nn.Linear(in_dim, inter_dim)
+        self.nonlinear = F.gelu
+        self.project2 = nn.Linear(inter_dim, in_dim)
+
+        self.dropout = nn.Dropout(p=0.1)
+
+        self.adapter_conv = MonaOp(inter_dim)
+
+        self.norm = nn.LayerNorm(in_dim)
+        self.gamma = nn.Parameter(torch.ones(in_dim) * 1e-6)
+        self.gammax = nn.Parameter(torch.ones(in_dim))
+
+    def forward(self, x, hw_shapes=None):
+        # x: [B, C, H, W]
+        B, C, H, W = x.shape
+        x = x.reshape(B, C, -1).permute(0, 2, 1) # [B, H*W, C]
+        
+        identity = x
+
+        x = self.norm(x) * self.gamma + x * self.gammax
+
+        project1 = self.project1(x)
+
+        b, n, c = project1.shape
+        h, w = hw_shapes
+        project1 = project1.reshape(b, h, w, c).permute(0, 3, 1, 2)
+        project1 = self.adapter_conv(project1)
+        project1 = project1.permute(0, 2, 3, 1).reshape(b, n, c)
+
+        nonlinear = self.nonlinear(project1)
+        nonlinear = self.dropout(nonlinear)
+        project2 = self.project2(nonlinear)
+        
+        out = identity + project2
+        out = out.reshape(B, H, W, C).permute(0, 3, 1, 2)
+
+        return out
+    
 if __name__ == '__main__':
     
-    model = Mona(1024)
+    model = MonaRes(256)
     print(f"Mona: {model}")
     print(f"模型总参数量: {sum(param.numel() for param in model.parameters())}")
     
-    input = torch.randn(10, 49, 1024)
+    
+    # [B, L, C]
+    # input = torch.randn(10, 49, 1024)
+    # [B, C, H, W]
+    input = torch.randn(3, 256, 56, 56)
     print(f"The input size is: {input.shape}")
-    output = model(input, hw_shapes=(7, 7))
+    output = model(input, hw_shapes=(56, 56))
     print(f"The output size is: {output.shape}")
     # for param in model.parameters():
     #     print(type(param))

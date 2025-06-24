@@ -39,6 +39,7 @@ class PseudoLabelDataset(Dataset):
 
 class GeneralData(Dataset):
     def __init__(self, root, data_list_file, config, phase = "train"):
+        self.config = config
         self.input_shape = config.input_shape
         self.au_list = config.au_list
         self.phase = phase
@@ -54,17 +55,17 @@ class GeneralData(Dataset):
             self.transforms = T.Compose([
                 # T.Resize((self.input_shape[1] + 24,self.input_shape[1] + 24)),
                 # T.RandomRotation(10),
-                # T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-                # T.RandomCrop(self.input_shape[1:],pad_if_needed=True),
-                T.RandomResizedCrop((self.input_shape[1], self.input_shape[2]), (0.9, 1.0)),
+                # T.RandomResizedCrop((self.input_shape[1], self.input_shape[2]), (0.9, 1.0)),
+                T.RandomCrop(self.input_shape[1]),
                 T.RandomHorizontalFlip(),
+                T.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.0),
                 T.ToTensor(),
                 normalize
             ])
         else:
             self.transforms = T.Compose([
-                T.Resize((self.input_shape[1], self.input_shape[2])),
-                T.CenterCrop((self.input_shape[1], self.input_shape[2])),
+                T.Resize(self.config.img_size), # 256
+                T.CenterCrop(self.input_shape[1]), # 224
                 T.ToTensor(),
                 normalize
             ])

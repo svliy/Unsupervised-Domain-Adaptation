@@ -145,13 +145,13 @@ class ModifiedResNet(nn.Module):
 
         x = x.type(self.conv1.weight.dtype)
         x = stem(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.attnpool(x)
+        x1 = self.layer1(x)
+        x2 = self.layer2(x1)
+        x3 = self.layer3(x2)
+        x4 = self.layer4(x3)
+        out = self.attnpool(x4)
 
-        return x
+        return x1, x2, x3, x4, out
 
 
 class LayerNorm(nn.LayerNorm):

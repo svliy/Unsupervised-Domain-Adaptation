@@ -10,8 +10,6 @@ checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results
 source_domain: 'bp4d'
 source_data_root: '/mnt/sda/yiren/data'
 source_train_list: './data/bp4d/total.csv'
-# source_train_list: './data/bp4d/total_train.csv'
-source_val_list: './data/bp4d/total_val.csv'
 ## Target Domain
 fold: 1
 target_domain: 'gft'
@@ -28,14 +26,13 @@ batch_size: 256
 number_works: 8
 epochs: 20
 optimizer: 'sgd'
-lr_init: 0.0005
+lr_init: 0.001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
 early_stop: 5
 source_cl_loss_weight: 0.1
 target_cl_loss_weight: 0.1
-target_loss_weight: 0.1
 
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16
@@ -52,7 +49,7 @@ ctp: 'end' # class token position (end or middle)
 f_pass: 5
 tau_p: 0.9 
 kappa_p: 0.005
-ema_decay: 0.998
+ema_decay: 0.999
 
 tau_n: 0.005
 kappa_n: 0.005

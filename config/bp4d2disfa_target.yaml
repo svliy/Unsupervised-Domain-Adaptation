@@ -1,6 +1,6 @@
 # Experiment Setup
 exp_name: 'bp4d2disfa'
-seed: 1000
+seed: 0
 stage: 'one'
 train_or_test: 'train'
 checkpoint_path: ''
@@ -13,11 +13,11 @@ source_data_root: '/mnt/sda/yiren/data'
 source_train_list: './data/bp4d/total.csv'
 source_val_list: './data/bp4d/total_val.csv'
 ## Target Domain
-fold: 1
+fold: 3
 target_domain: 'disfa'
 target_data_root: '/mnt/sda/yiren/data/DISFA/Images_left'
-target_train_list: './data/disfa/train_1f.csv'
-target_test_list: './data/disfa/test_1f.csv'
+target_train_list: './data/disfa/train_3f.csv'
+target_test_list: './data/disfa/test_3f.csv'
 ## General Data Parameters
 img_size: 256
 input_shape: [3, 224, 224]
@@ -27,21 +27,20 @@ class_num: 5
 # Training Parameters
 batch_size: 256
 number_works: 8
-epochs: 15
+epochs: 10
 optimizer: 'adamw'
 lr_init: 0.00001
-lr_min: 0.000001
+lr_min: 0.00001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
 early_stop: 5
-source_cl_loss_weight: 0.1
-transfer_loss_weight: 10.0
+target_cl_loss_weight: 0.1
 
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16
-drop_rate: 0.3
 neighbor_num: 4
+drop_rate: 0.0
 
 # CoOp
 n_ctx: 16

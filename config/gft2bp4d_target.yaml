@@ -13,11 +13,11 @@ source_data_root: '/mnt/sda/yiren/data'
 source_train_list: './data/gft/total.csv'
 source_val_list: './data/gft/total_val.csv'
 ## Target Domain
-fold: 1
+fold: 3
 target_domain: 'bp4d'
 target_data_root: '/mnt/sda/yiren/data'
-target_train_list: './data/bp4d/train_1f.csv'
-target_test_list: './data/bp4d/test_1f.csv'
+target_train_list: './data/bp4d/train_3f.csv'
+target_test_list: './data/bp4d/test_3f.csv'
 ## General Data Parameters
 input_shape: [3, 224, 224]
 au_list: [1, 2, 4, 6, 10, 12, 14, 15, 23, 24]

@@ -176,6 +176,8 @@ class WeightedAsymmetricLoss(nn.Module):
             x: pred [B, 8]
             y: true label [B, 8]
         """
+        x = x.sigmoid()
+        
         xs_pos = x
         xs_neg = 1 - x
 
@@ -184,12 +186,12 @@ class WeightedAsymmetricLoss(nn.Module):
         los_neg = (1 - y) * torch.log(xs_neg.clamp(min=self.eps))
 
         # Asymmetric Focusing
-        # if self.disable_torch_grad:
-            # torch.set_grad_enabled(False)
-        # neg_weight = 1 - xs_neg
-        # if self.disable_torch_grad:
-            # torch.set_grad_enabled(True)
-        loss = los_pos + los_neg
+        if self.disable_torch_grad:
+            torch.set_grad_enabled(False)
+        neg_weight = 1 - xs_neg
+        if self.disable_torch_grad:
+            torch.set_grad_enabled(True)
+        loss = los_pos + neg_weight * los_neg
 
         if self.weight is not None:
             loss = loss * self.weight.view(1,-1)
@@ -442,6 +444,95 @@ class ContrastiveLossForSource(nn.Module):
 
         # (可选) 添加对 log_temperature 范围的约束，防止其过大或过小
         # self.log_temperature.data.clamp_(min=np.log(1/100), max=np.log(1/0.01)) # 例如限制 T 在 0.01 到 100 之间
+
+        return final_loss
+    
+class ContrastiveLossUnlabelled(nn.Module):
+    """
+    图像中心 (Image-Centric) 的对比损失函数 - 基于交叉熵 (无标签版本)。
+
+    假设批次中的每一张图像 `i` 的所有 `num_classes` 个 AU 特征都是相关的。
+    对于批次中的每一张图像 `i` 和其每一个 AU 特征 `k`:
+    - 计算 `image_features[i, k]` 与 *所有* 文本 AU 特征 `text_features[j]` 的相似度。
+    - 我们希望 `image_features[i, k]` 与对应的 `text_features[k]` (正样本) 的相似度最高。
+    - 这可以通过对每个 `(i, k)` 对应用交叉熵损失来实现，
+      其中输入 logits 是 `sim(image[i, k], text[:])`，目标类别是 `k`。
+    - 最终损失是所有这些单独损失的平均值。
+
+    优化：
+    - 使用 einsum 计算所有 image_feature[i, k] vs text_feature[j] 的相似度。
+    - 使用向量化的交叉熵损失计算，并对所有 B * num_classes 个项进行平均。
+    """
+    def __init__(self, initial_temperature=0.07, eps=1e-8): # CLIP 使用 0.07
+        super().__init__()
+        # 可学习的对数温度参数
+        self.log_temperature = nn.Parameter(torch.log(torch.tensor(1.0 / initial_temperature)))
+        self.eps = eps
+
+    def forward(self, image_features, text_features):
+        """
+        计算图像中心的对比损失 (交叉熵版本, 无标签)。
+
+        Args:
+            image_features (torch.Tensor): 图像 AU 特征。形状: [B, num_classes, dim]
+            text_features (torch.Tensor): 文本 AU 特征。形状: [num_classes, dim]
+
+        Returns:
+            torch.Tensor: 计算得到的对比损失（标量）。
+        """
+        assert image_features.ndim == 3 and text_features.ndim == 2
+        assert image_features.shape[1] == text_features.shape[0] # num_classes 必须匹配
+        assert image_features.shape[2] == text_features.shape[1] # dim 必须匹配
+
+        B, num_classes, dim = image_features.shape
+        device = image_features.device
+
+        # --- 1. 特征归一化 (原代码步骤2) ---
+        image_features = F.normalize(image_features, p=2, dim=-1, eps=self.eps) # [B, C, D]
+        text_features = F.normalize(text_features, p=2, dim=-1, eps=self.eps)   # [C, D]
+
+        # --- 2. 计算图像AU特征 vs 所有文本AU特征的相似度 (原代码步骤3) ---
+        # similarities[i, k, j] = similarity between image_features[i, k] and text_features[j]
+        similarities = torch.einsum('bkd,jd->bkj', image_features, text_features) # [B, C, C]
+
+        # --- 3. 应用温度缩放 (原代码步骤4) ---
+        logit_scale = torch.exp(self.log_temperature)
+        logits = similarities * logit_scale # [B, C, C]
+        # logits[i, k, :] 代表 image_features[i, k] 与所有 text_features[:] 的相似度（已缩放）
+
+        # --- 4. 构建交叉熵损失的目标和输入 (原代码步骤5) ---
+        # 目标：对于每个 image_features[i, k]，正确的 text_features 索引是 k
+        targets = torch.arange(num_classes, device=device).long() # Shape: [C]
+        # 为每个 batch 样本和每个图像 AU 特征 k 扩展目标
+        # 我们需要对 B*C 个 image features 计算损失
+        targets = targets.unsqueeze(0).expand(B, -1) # Shape: [B, C]
+        targets_flat = targets.reshape(B * num_classes) # Shape: [B*C]
+
+        # 输入 logits 需要调整形状为 [N, num_classes]
+        # logits[i, k, :] 是 image_features[i, k] 与所有 text_features 的相似度
+        logits_flat = logits.view(B * num_classes, num_classes) # Shape: [B*C, C]
+
+        # --- 5. 计算交叉熵损失并平均 (原代码步骤6修改) ---
+        # 由于我们假设所有标签都为1，所以不需要掩码。
+        # 我们直接计算所有 B * num_classes 个元素的平均损失。
+
+        # 检查是否存在有效的元素进行损失计算
+        # (例如，如果 batch_size=0 或 num_classes=0)
+        num_total_elements = B * num_classes
+        if num_total_elements == 0:
+            # 如果没有元素，返回0损失。确保梯度传播性与log_temperature一致
+            final_loss = torch.tensor(0.0, device=device, requires_grad=self.log_temperature.requires_grad)
+        else:
+            # 计算交叉熵损失，并直接求平均
+            # F.cross_entropy 当 reduction='mean' 时，如果输入为空，可能返回 NaN
+            # 所以我们先计算 'none' 然后安全地平均
+            loss_ce_all = F.cross_entropy(logits_flat, targets_flat, reduction='none') # Shape: [B*C]
+            final_loss = loss_ce_all.mean()
+            # 或者，如果可以保证 num_total_elements > 0 (例如通过批处理器的最小批次大小)
+            # final_loss = F.cross_entropy(logits_flat, targets_flat, reduction='mean')
+
+        # (可选) 添加对 log_temperature 范围的约束
+        # self.log_temperature.data.clamp_(min=np.log(1/100), max=np.log(1/0.01))
 
         return final_loss
 

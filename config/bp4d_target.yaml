@@ -1,0 +1,42 @@
+# Experiment Setup
+exp_name: 'bp4d_5'
+seed: 2048
+train_or_test: 'train'
+checkpoint_path: ''
+
+# Dataset Configuration
+## Target Domain
+fold: 2
+target_domain: 'bp4d'
+target_data_root: '/mnt/sda/yiren/data'
+target_train_list: './data/bp4d/train_2f.csv'
+target_test_list: './data/bp4d/test_2f.csv'
+number_works: 8
+## General Data Parameters
+img_size: 256
+input_shape: [3, 224, 224]
+au_list: [1, 2, 4, 6, 12]
+class_num: 5
+
+# Training Parameters
+batch_size: 256
+epochs: 15
+optimizer: 'adamw'
+lr_init: 0.00002
+lr_min: 0.000001
+momentum: 0.9
+weight_decay: 0.1
+stop: 0
+early_stop: 5
+target_cl_loss_weight: 0.1
+
+# Model Parameters
+backbone: 'RN50' # RN50, ViT-B/16
+neighbor_num: 4
+drop_rate: 0.0
+
+# CoOp
+n_ctx: 16
+ctx_init: ''
+csc: False # class-specific context (False or True)
+ctp: 'end' # class token position (end or middle)

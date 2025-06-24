@@ -1,9 +1,9 @@
 # Experiment Setup
-exp_name: 'gft2bp4d'
+exp_name: 'gft2bp4d+'
 seed: 1000
 stage: 'two'
 train_or_test: 'train'
-checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results/gft2bp4d/one_train_cross_fold_1_seed_1000_date_2025-05-08_09_15-49_AM/E3_model_fold1.pth'
+checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results/gft2bp4d+/one_train_cross_fold_1_seed_1000_date_2025-05-09_12_11-59_PM/E4_model_fold1.pth'
 
 # Dataset Configuration
 ## Source Domain
@@ -13,11 +13,11 @@ source_data_root: '/mnt/sda/yiren/data'
 source_train_list: './data/gft/total.csv'
 source_val_list: './data/gft/total_val.csv'
 ## Target Domain
-fold: 1
-target_domain: 'bp4d'
-target_data_root: '/mnt/sda/yiren/data'
-target_train_list: './data/bp4d/train_1f.csv'
-target_test_list: './data/bp4d/test_1f.csv'
+fold: 3
+target_domain: 'bp4d+'
+target_data_root: '/mnt/sda/yiren/data/BP4D+/Images'
+target_train_list: './data/bp4d+/train_3f.csv'
+target_test_list: './data/bp4d+/test_3f.csv'
 ## General Data Parameters
 input_shape: [3, 224, 224]
 au_list: [1, 2, 4, 6, 10, 12, 14, 15, 23, 24]
@@ -26,14 +26,15 @@ class_num: 10
 # Training Parameters
 batch_size: 256
 number_works: 8
-epochs: 20
+epochs: 5
 optimizer: 'sgd'
 lr_init: 0.001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
 early_stop: 5
-target_cl_loss_weight: 0.1
+source_cl_loss_weight: 0.1
+transfer_loss_weight: 10.0
 
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16

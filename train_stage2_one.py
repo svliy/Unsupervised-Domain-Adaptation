@@ -9,10 +9,10 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from model.transfer_au import TransferNet
+from model.transfer_one import TransferNet
 from dataset import GeneralData, PseudoLabelDataset
 from utils import *
-from loss import ContrastiveLossForSource
+from loss import ContrastiveLossForSource, MMD_loss
 from description import describe_au
 
 import pdb
@@ -64,20 +64,21 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, em
     loss_all = AverageMeter()
     loss_source_bce = AverageMeter()
     loss_target_cl = AverageMeter()
+    loss_transfer = AverageMeter()
     
     model.train()
     model.freeze_bn()
     
     statistics_list = None
     source_loader = dataloaders['source_train']
-    target_loader = dataloaders['pseudo_label_loader']
-    # target_loader = dataloaders['target_train']
+    # target_loader = dataloaders['pseudo_label_loader']
+    target_loader = dataloaders['target_train']
     
     source_train_iter = iter(source_loader)
     
     len_dataloader = len(target_loader)
     
-    for batch_idx, (target_img, target_truth_label, target_pseudo_label, target_img_name) in enumerate(tqdm(target_loader)):
+    for batch_idx, (target_img, target_truth_label, target_img_name) in enumerate(tqdm(target_loader)):
         # --- 获取源域数据 ---
         try:
             source_img, source_label, source_img_name = next(source_train_iter)
@@ -86,7 +87,8 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, em
             source_train_iter = iter(source_loader)
             source_img, source_label, source_img_name = next(source_train_iter)
         if torch.cuda.is_available():
-            target_img, target_truth_label, target_pseudo_label = target_img.cuda(), target_truth_label.float().cuda(), target_pseudo_label.float().cuda()
+            # target_img, target_truth_label, target_pseudo_label = target_img.cuda(), target_truth_label.float().cuda(), target_pseudo_label.float().cuda()
+            target_img, target_truth_label = target_img.cuda(), target_truth_label.float().cuda()
             source_img, source_label = source_img.cuda(), source_label.float().cuda()
         
         optimizer.zero_grad()
@@ -94,27 +96,36 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, em
         target_output = model(target_img)
         
         source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
-        target_cl_loss = criterion['target_cl_loss'](target_output['au_vision_features'], target_output['au_text_features'], target_pseudo_label) # 目标域对比学习损失        
-        loss = source_bce_loss + config.target_cl_loss_weight*target_cl_loss # 整体损失
+        # target_cl_loss = criterion['target_cl_loss'](target_output['au_vision_features'], target_output['au_text_features']) # 目标域对比学习损失        
+        # source_bce_loss = torch.tensor(0.0).cuda()
+        target_cl_loss = torch.tensor(0.0).cuda()
+        
+        transfer_loss = criterion['transfer_loss'](torch.flatten(source_output['au_vision_features'], 1),
+                                                   torch.flatten(target_output['au_vision_features'], 1))
+        
+        loss = source_bce_loss + config.transfer_loss_weight*transfer_loss + config.target_cl_loss_weight*target_cl_loss # 整体损失
+        
         loss.backward()
         optimizer.step()
         ema_model.update(model) # 更新模型参数
         
         loss_source_bce.update(source_bce_loss.data.item(), config.batch_size)
         loss_target_cl.update(target_cl_loss.data.item(), config.batch_size)
+        loss_transfer.update(transfer_loss.data.item(), config.batch_size)
         loss_all.update(loss.data.item(), config.batch_size)
         
         update_list = statistics(target_output['logits'].sigmoid().detach(), target_truth_label.detach(), 0.5)
         statistics_list = update_statistics_list(statistics_list, update_list)
         
         if batch_idx == 0 or (batch_idx % (len_dataloader // 10) == 0):
-            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{len_dataloader} | loss: {loss_all.avg:.6f} | source_bce_loss: {loss_source_bce.avg} | target_cl_loss: {loss_target_cl.avg}')
+            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{len_dataloader} | loss: {loss_all.avg:.6f} | source_bce_loss: {loss_source_bce.avg} | target_cl_loss: {loss_target_cl.avg} | transfer_loss: {loss_transfer.avg}')
     mean_f1_score, f1_score_list = calc_f1_score(statistics_list)
     mean_acc, acc_list = calc_acc(statistics_list)
     return {
         'loss': loss_all.avg,
         'source_bce_loss': loss_source_bce.avg,
         'target_cl_loss': loss_target_cl.avg,
+        'transfer_loss': loss_transfer.avg,
         'mean_f1_score': mean_f1_score,
         'f1_score_list': f1_score_list,
         'mean_acc': mean_acc,
@@ -227,7 +238,7 @@ def pseudo_label(epoch, config, dataloaders, model, ema_model):
             completely_correct_samples_mask = np.all(pseudo_labels == truth_labels, axis=1)
             num_completely_correct_samples = np.sum(completely_correct_samples_mask)
             logger.info(f"Epoch[{epoch}]: Number of completelpy correct samples: {num_completely_correct_samples}")
-            logger.info(f"Epoch[{epoch}]: Proportion of nvidicompletely correct samples: {num_completely_correct_samples/len(pseudo_labels)}")
+            logger.info(f"Epoch[{epoch}]: Proportion of completely correct samples: {num_completely_correct_samples/len(pseudo_labels)}")
             # 每个AU中预测的准确度
             correct_predictions = (pseudo_labels == truth_labels).astype(np.float32) # (108538, 10)
             accuracy_per_au = np.mean(correct_predictions, axis=0) # (10,)
@@ -255,18 +266,6 @@ def pseudo_label(epoch, config, dataloaders, model, ema_model):
         file_path_npy = f"{config['outdir']}/acc_matrix.npy"
         np.save(file_path_npy, acc_matrix)
         # pdb.set_trace()
-        # 预测为真的样本中，确实为真的样本占比:
-        # np.max(out_std_list)
-        # pseudo_labels, _ = get_acc_pseudo_label(0.02, 0.5)
-        # double_truth = truth_labels*pseudo_labels # [86731, 5]
-        # truth_labels.sum(0) # [5] [ 4294.,  3521., 13352.,  5278., 10292.]
-        # pseudo_labels.sum(0) # [5] [ 227,  344, 3258,    0,    0]
-        # double_truth.sum(0) # [5] [ 221.,  316., 2907.,    0.,    0.]
-        # double_truth.sum(0) / pseudo_labels.sum(0)
-        
-        # np.sum(truth_labels)
-        # np.sum(pseudo_labels)
-        
         # if True:
         #     # 每个类别正确预测为正例的数量 (真阳性 TP)。
         #     n_correct_pos = (truth_labels*pseudo_labels).sum(0)
@@ -334,7 +333,7 @@ def main(args):
             'source_bce_loss': nn.BCEWithLogitsLoss(weight=source_weight.float().cuda(), pos_weight=source_pos_weight.float().cuda()),
             'target_bce_loss': nn.BCEWithLogitsLoss(),
             'target_cl_loss': ContrastiveLossForSource(initial_temperature=0.07),
-            # 'mae_loss': nn.L1Loss(),
+            'transfer_loss': MMD_loss(),
         }
         
         # optimizer
@@ -371,18 +370,18 @@ def main(args):
         logger.info({'Val Acc-list:'})
         logger.info(dataset_info(ema_val_output['acc_list']))
             
-        
+        # pdb.set_trace()
         for epoch in range(1, config.epochs + 1):
             lr = optimizer.param_groups[0]['lr']
             logger.info("Epoch: [{:2d}/{:2d}], lr: {}".format(epoch, config.epochs, lr))
             
-            logger.info('==> Pseudo labeling...')
-            pseudo_label_loader = pseudo_label(epoch, config, dataloaders, model, ema_m.module)
-            dataloaders['pseudo_label_loader'] = pseudo_label_loader
+            # logger.info('==> Pseudo labeling...')
+            # pseudo_label_loader = pseudo_label(epoch, config, dataloaders, model, ema_m.module)
+            # dataloaders['pseudo_label_loader'] = pseudo_label_loader
             
             logger.info('==> Training...')
             train_output = train(epoch, config, model, dataloaders, criterion, optimizer, scheduler, ema_m)
-            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, source_bce_loss: {:.6f}, target_cl_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['target_cl_loss'])})
+            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, source_bce_loss: {:.6f}, target_cl_loss: {:.6f}, transfer_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['target_cl_loss'], train_output['transfer_loss'])})
             logger.info({'Train F1-score-list:'})
             logger.info(dataset_info(train_output['f1_score_list']))
             logger.info({'Train Acc-list:'})

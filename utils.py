@@ -54,7 +54,7 @@ def statistics(pred, y, thresh):
     batch_size = pred.size(0) # 64
     # 标签的数量：8
     class_nb = pred.size(1) 
-    pred = pred >= thresh
+    pred = pred > thresh
     pred = pred.long()
     statistics_list = []
     for j in range(class_nb):
@@ -277,13 +277,15 @@ def set_outdir(config):
     # 设置输出路径
     # pdb.set_trace()
     outdir = os.path.join(default_outdir, config.exp_name)
-    prefix = str(config.stage)+'_'+str(config.train_or_test)+'_'+str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%I_%M-%S_%p')
+    prefix = str(config.stage)+'_'+str(config.train_or_test)+'_'+str(config.mode)+'_fold_'+str(config.fold)+'_seed_'+str(config.seed)+'_date_'+datetime.now().strftime('%Y-%m-%d_%H_%M-%S_%p')
     outdir = os.path.join(outdir, prefix)
     ensure_dir(outdir)
     config['outdir'] = outdir
     shutil.copyfile(f"./config/{config.config_file}.yaml", os.path.join(outdir, f'{config.config_file}.yaml'))
 
     return config
+
+
 
 def set_logger(config):
     # 定义一个name为transfer的logger
@@ -322,10 +324,9 @@ def get_weight(scv_file_path, au_list):
     return torch.tensor(AU_weight), torch.tensor(pos_weight)
 
 def set_dataset_info(config):
-    
-    if config.exp_name in ["bp4d2disfa", 'disfa2bp4d']:
+    if config.exp_name in ["bp4d2disfa", 'disfa2bp4d', "bp4d+2disfa", 'disfa2bp4d+']:
         dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU12: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4])}
-    elif config.exp_name in ["bp4d2gft", "gft2bp4d"]: # bp4d, gft
+    elif config.exp_name in ["bp4d2gft", "gft2bp4d", "bp4d+2gft", "gft2bp4d+"]:
         dataset_info = lambda list: {'AU1: {:.2f} AU2: {:.2f} AU4: {:.2f} AU6: {:.2f} AU10: {:.2f} AU12: {:.2f} AU14: {:.2f} AU15: {:.2f} AU23: {:.2f} AU24: {:.2f}'.format(100.*list[0],100.*list[1],100.*list[2],100.*list[3],100.*list[4],100.*list[5],100.*list[6],100.*list[7],100.*list[8],100.*list[9])}        
     return dataset_info
 
@@ -340,19 +341,10 @@ class ModelEma(torch.nn.Module):
         # make a copy of the model for accumulating moving average of weights
         self.module = deepcopy(model)
         self.module.eval()
-
-        # import ipdb; ipdb.set_trace()
-
         self.decay = decay
         self.device = device  # perform ema on different device from model if set
         if self.device is not None:
             self.module.to(device=device)
-            
-        self.module.vision_features = {}
-        self.module.image_encoder.layer1.register_forward_hook(self.get_activation('layer1'))
-        self.module.image_encoder.layer2.register_forward_hook(self.get_activation('layer2'))
-        self.module.image_encoder.layer3.register_forward_hook(self.get_activation('layer3'))
-        self.module.image_encoder.layer4.register_forward_hook(self.get_activation('layer4'))
 
     def get_activation(self, name):
         def hook(model, input, output):

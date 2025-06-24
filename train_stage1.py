@@ -96,8 +96,8 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler=Non
         # target_output = model(target_img, text_ori)
         
         source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
-        source_cl_loss = criterion['source_cl_loss'](source_output['au_vision_features'], source_output['au_text_features'], source_label) # 源域对比损失
-        # source_cl_loss = torch.tensor(0.0).cuda()
+        # source_cl_loss = criterion['source_cl_loss'](source_output['au_vision_features'], source_output['au_text_features'], source_label) # 源域对比损失
+        source_cl_loss = torch.tensor(0.0).cuda()
         # transfer_loss = criterion['transfer_loss'](source_output['transfer_feature'], target_output['transfer_feature'])
         transfer_loss = torch.tensor(0.0).cuda()
         loss = source_bce_loss + config.source_cl_loss_weight*source_cl_loss + config.transfer_loss_weight*transfer_loss# 整体损失
@@ -217,12 +217,11 @@ def pseudo_label(epoch, config, ub_train_dataloader, model):
 
 
 def main(args):
-
     config = set_config(args) # 获取配置
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
-    
+
     dataset_info = set_dataset_info(config) # 设置数据集配置信息
     # 构造数据集
     logger.info(f"****************[{config.mode}]:[{config.exp_name}]****************")
@@ -252,13 +251,14 @@ def main(args):
         criterion = {
             'source_bce_loss': nn.BCEWithLogitsLoss(weight=source_weight.float().cuda(), pos_weight=source_pos_weight.float().cuda()),
             'source_cl_loss': ContrastiveLossForSource(initial_temperature=0.07),
-            # 'transfer_loss': MMD_loss(),
         }
+        
         # optimizer
         model_params = filter(lambda p: p.requires_grad, model.parameters())
         loss_params = criterion['source_cl_loss'].parameters()
         all_params = list(model_params) + list(loss_params) # 合并所有需要优化的参数
         optimizer = set_optimizer(config, all_params)
+        
         # scheduler
         # iterations_per_epoch = len(dataloaders['source_train'])
         # total_iterations = iterations_per_epoch * config.epochs
@@ -269,9 +269,10 @@ def main(args):
         # Train and val loop    
         best_f1 = 0
         best_epoch = 0
-        config.stop = 0 # early stop
+        # config.stop = 0 # early stop
         
         for epoch in range(1, config.epochs + 1):
+            
             lr = optimizer.param_groups[0]['lr']
             logger.info("Epoch: [{:2d}/{:2d}], lr: {}".format(epoch, config.epochs, lr))
             
@@ -295,15 +296,16 @@ def main(args):
             if current_f1 > best_f1:
                 best_f1 = current_f1
                 best_epoch = epoch
-                config.stop = 0
+                # config.stop = 0
             logger.info(f"Best f1: {best_f1} at epoch {best_epoch}")
             checkpoint = {
                     'state_dict': model.state_dict(),
                 }
             torch.save(checkpoint, os.path.join(config['outdir'], 'E' + str(epoch) + '_model_fold' + str(config.fold) + '.pth'))
-            config.stop = config.stop + 1
-            if config.stop > config.early_stop:
-                break
+            
+            # config.stop = config.stop + 1
+            # if config.stop > config.early_stop:
+            #     break
             
     elif config.train_or_test == 'test':
         logger.info("****************[Test Mode]****************")
@@ -311,6 +313,7 @@ def main(args):
         model = TransferNet(config)
         model = model.cuda()
         # 加载模型
+        
         checkpoint = torch.load(config.checkpoint_path)
         model.load_state_dict(checkpoint['state_dict'])
         model.eval()

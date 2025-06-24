@@ -1,17 +1,15 @@
 # Experiment Setup
 exp_name: 'bp4d2disfa'
 seed: 1000
-stage: 'one'
+stage: 'two'
 train_or_test: 'train'
-checkpoint_path: ''
+checkpoint_path: '/mnt/sda/yiren/code/uda/Unsupervised-Domain-Adaptation/results/bp4d2disfa/one_train_cross_fold_2_seed_2025_date_2025-05-07_09_59-51_AM/best_model_fold2.pth'
 
 # Dataset Configuration
 ## Source Domain
 source_domain: 'bp4d'
 source_data_root: '/mnt/sda/yiren/data'
-# source_train_list: './data/bp4d/total_train.csv'
 source_train_list: './data/bp4d/total.csv'
-source_val_list: './data/bp4d/total_val.csv'
 ## Target Domain
 fold: 1
 target_domain: 'disfa'
@@ -19,7 +17,6 @@ target_data_root: '/mnt/sda/yiren/data/DISFA/Images_left'
 target_train_list: './data/disfa/train_1f.csv'
 target_test_list: './data/disfa/test_1f.csv'
 ## General Data Parameters
-img_size: 256
 input_shape: [3, 224, 224]
 au_list: [1, 2, 4, 6, 12]
 class_num: 5
@@ -27,10 +24,9 @@ class_num: 5
 # Training Parameters
 batch_size: 256
 number_works: 8
-epochs: 15
-optimizer: 'adamw'
-lr_init: 0.00001
-lr_min: 0.000001
+epochs: 5
+optimizer: 'sgd'
+lr_init: 0.001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
@@ -41,10 +37,19 @@ transfer_loss_weight: 10.0
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16
 drop_rate: 0.3
-neighbor_num: 4
+neighbor_num: 5
 
 # CoOp
 n_ctx: 16
 ctx_init: ''
 csc: False # class-specific context (False or True)
 ctp: 'end' # class token position (end or middle)
+
+# pseudo label
+f_pass: 5
+tau_p: 0.9 
+kappa_p: 0.005
+ema_decay: 0.999
+
+tau_n: 0.005
+kappa_n: 0.005

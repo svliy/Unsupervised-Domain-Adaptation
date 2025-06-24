@@ -1,6 +1,6 @@
 # Experiment Setup
 exp_name: 'disfa2bp4d'
-seed: 1000
+seed: 1113
 stage: 'one'
 train_or_test: 'train'
 checkpoint_path: ''
@@ -9,7 +9,6 @@ checkpoint_path: ''
 ## Source Domain
 source_domain: 'disfa'
 source_data_root: '/mnt/sda/yiren/data/DISFA/Images_left'
-# source_train_list: './data/bp4d/total_train.csv'
 source_train_list: './data/disfa/total.csv'
 source_val_list: './data/disfa/total_val.csv'
 ## Target Domain
@@ -19,6 +18,7 @@ target_data_root: '/mnt/sda/yiren/data'
 target_train_list: './data/bp4d/train_1f.csv'
 target_test_list: './data/bp4d/test_1f.csv'
 ## General Data Parameters
+img_size: 256
 input_shape: [3, 224, 224]
 au_list: [1, 2, 4, 6, 12]
 class_num: 5
@@ -26,9 +26,9 @@ class_num: 5
 # Training Parameters
 batch_size: 256
 number_works: 8
-epochs: 3
-optimizer: 'sgd'
-lr_init: 0.002
+epochs: 10
+optimizer: 'adamw'
+lr_init: 0.0001
 momentum: 0.9
 weight_decay: 0.0005
 stop: 0
