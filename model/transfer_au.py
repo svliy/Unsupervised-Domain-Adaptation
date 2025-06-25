@@ -304,25 +304,24 @@ class TransferNet(nn.Module):
         self.vision_dim = 256
         
         clip_model, _ = clip.load(config.backbone, device="cpu")
+        
         # CoOp
-        # text = describe_au(config.au_list)
-        # self.prompt_learner = PromptLearner(config, classnames=text, clip_model=clip_model)
-        # self.tokenized_prompts = self.prompt_learner.tokenized_prompts
+        text = describe_au(config.au_list)
+        self.prompt_learner = PromptLearner(config, classnames=text, clip_model=clip_model)
+        self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         # Encoder for Vision and Language
         self.image_encoder = clip_model.visual
-        # self.text_encoder = TextEncoder(clip_model)
+        self.text_encoder = TextEncoder(clip_model)
         # CLIP
-        # self.clip_logit_scale = clip_model.logit_scale
-        # self.dtype = clip_model.dtype
+        self.clip_logit_scale = clip_model.logit_scale
+        self.dtype = clip_model.dtype
         # 文本
-        # self.text_transform = nn.Linear(self.vision_dim*4, self.vision_dim)
+        self.text_transform = nn.Linear(self.vision_dim*4, self.vision_dim)
         
         print("冻结CLIP模型视觉和文本编码器")
-        # for param in list(self.image_encoder.parameters()) + list(self.text_encoder.parameters()):
-        #     param.requires_grad = False
-        for param in list(self.image_encoder.parameters()):
+        for param in list(self.image_encoder.parameters()) + list(self.text_encoder.parameters()):
             param.requires_grad = False
-        # self.clip_logit_scale.requires_grad = False
+        self.clip_logit_scale.requires_grad = False
         
         # 适配器
         self.adapter_s1 = VisionAdapter(self.vision_dim , self.vision_dim, pool_kernel=8, pool_stride=8) # 56x56 -> 7x7
@@ -332,7 +331,7 @@ class TransferNet(nn.Module):
 
         # Cross Attention
         # (seq_len, batch, embed_dim)
-        # self.cross_attention = CrossAttention(embed_dim=self.vision_dim, num_heads=8, layers=2)
+        self.cross_attention = CrossAttention(embed_dim=self.vision_dim, num_heads=8, layers=2)
         
         self.branch_layers = nn.ModuleList([
             BranchLayer(self.vision_dim) for _ in range(self.num_classes)
@@ -374,47 +373,33 @@ class TransferNet(nn.Module):
         # 特征相加: [B, 256, 7, 7]
         image_features_fusion = adapter_features_s1 + adapter_features_s2 + adapter_features_s3 + adapter_features_s4
 
-        # 1. text features
-        # prompts = self.prompt_learner() # [10, 77, 512]
-        # tokenized_prompts = self.tokenized_prompts # [10, 77]
-        # text_features = self.text_encoder(prompts, tokenized_prompts) # [10, 1024]
-        # text_features = self.text_transform(text_features) # [10, 256]
+        # 3. 提取文本特征
+        prompts = self.prompt_learner() # [10, 77, 512]
+        tokenized_prompts = self.tokenized_prompts # [10, 77]
+        text_features = self.text_encoder(prompts, tokenized_prompts) # [10, 1024]
+        text_features = self.text_transform(text_features) # [10, 256]
         
-        
-       
-        
-        
-        ## 2.3 Combine Multi-Scale Features
-        # image_features_fusion = torch.cat([image_features_s1, image_features_s2, image_features_s3, image_features_s4], dim=1) # Shape: [B, 1024, 7, 7]
-        # image_features_fusion = self.multi_scale_fusion(image_features_fusion) # Shape: [B, 256, 7, 7]
-        
-        # # 3. cross attention
-        # # combined_features
-        # B, cross_dim, H, W = combined_features.shape
-        # combined_features_cross = combined_features.reshape(B, cross_dim, H*W).permute(2, 0, 1) # [49, 256, 256]
-        # text_features_cross = text_features.unsqueeze(1).expand(-1, B, -1) # [10, B, 256]
-        # # (seq_len, batch, embed_dim) [49, 256, 1024]
-        # vision_features_cross = self.cross_attention(combined_features_cross, text_features_cross, text_features_cross)
-        # vision_features_cross = vision_features_cross.permute(1, 2, 0).reshape(B, cross_dim, H, W)
-        # vision_features_cross = vision_features_cross + combined_features # [B, 256, 7, 7]
-        
-        # vision_features_cross = image_features_s4
-        
-        # image_features_fusion = image_features_s4
+        # 4. 跨模态注意力
+        B, cross_dim, H, W = image_features_fusion.shape
+        combined_features_cross = image_features_fusion.reshape(B, cross_dim, H*W).permute(2, 0, 1) # [49, B, 256]
+        text_features_cross = text_features.unsqueeze(1).expand(-1, B, -1) # [10, B, 256]
+        # (seq_len, batch, embed_dim) [49, 256, 1024]
+        cross_features = self.cross_attention(combined_features_cross, text_features_cross, text_features_cross)
+        cross_features = cross_features.permute(1, 2, 0).reshape(B, cross_dim, H, W)
+        cross_features = cross_features + image_features_fusion # [B, 256, 7, 7]
 
-        # 4. 多分支AU网络
-
+        # 5. 多分支AU网络
         # 使用列表推导式高效地得到所有分支的输出, 结果是一个list，包含N个 [B, C, H, W] 的张量
-        branch_outputs = [layer(image_features_fusion) for layer in self.branch_layers]
+        branch_outputs = [layer(cross_features) for layer in self.branch_layers]
         # 新张量的形状为 [B, N, C, H, W]，其中 N 是分支数量
         au_specific_features = torch.stack(branch_outputs, dim=1) 
         au_specific_features = au_specific_features.reshape(B, self.config.class_num, self.vision_dim, -1)
         au_pooled_features = au_specific_features.mean(dim=-1) # [B, num_classes, 256]
         
-        # 5. 图卷积网络
+        # 6. 图卷积网络
         gnn_features = self.gnn(au_pooled_features) # Shape: [B, num_classes, 256]
         
-        # 6. AU分类器
+        # 7. AU分类器
         logits = []
         for i in range(self.num_classes):
             au_feature = gnn_features[:, i, :] # Shape: [B, vision_dim]
@@ -425,8 +410,8 @@ class TransferNet(nn.Module):
         
         return {
             'logits': logits,
-            # 'au_vision_features': gnn_features, # [B, num_classes, 256]
-            # 'au_text_features': text_features,  # [num_classes, 256]
+            'vision_features': gnn_features, # [B, num_classes, 256]
+            'text_features': text_features,  # [num_classes, 256]
         }
     
 if __name__ == "__main__":

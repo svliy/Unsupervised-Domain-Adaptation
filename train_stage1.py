@@ -85,8 +85,8 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler=Non
         source_output = model(source_img)
         
         source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
-        # source_cl_loss = criterion['source_cl_loss'](source_output['au_vision_features'], source_output['au_text_features'], source_label) # 源域对比损失
-        source_cl_loss = torch.tensor(0.0).cuda()
+        source_cl_loss = criterion['source_cl_loss'](source_output['vision_features'], source_output['text_features'], source_label) # 源域对比损失
+        # source_cl_loss = torch.tensor(0.0).cuda()
         
         loss = source_bce_loss + config.source_cl_loss_weight * source_cl_loss # 整体损失
         loss.backward()
@@ -201,7 +201,7 @@ def main(args):
             
             logger.info('==> Training...')
             train_output = train(epoch, config, model, dataloaders, criterion, optimizer, scheduler)
-            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, bce_loss: {:.6f}, cl_loss: {:.6f}, transfer_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'])})
+            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, bce_loss: {:.6f}, cl_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'])})
             logger.info({'Train F1-score-list:'})
             logger.info(dataset_info(train_output['f1_score_list']))
             logger.info({'Train Acc-list:'})
