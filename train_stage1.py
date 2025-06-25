@@ -201,7 +201,7 @@ def main(args):
             
             logger.info('==> Training...')
             train_output = train(epoch, config, model, dataloaders, criterion, optimizer, scheduler)
-            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, bce_loss: {:.6f}, cl_loss: {:.6f}, transfer_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'], train_output['transfer_loss'])})
+            logger.info({'Epoch: [{:2d}/{:2d}], train_f1: {:.2f}, train_acc: {:.2f}, train_loss: {:.6f}, bce_loss: {:.6f}, cl_loss: {:.6f}, transfer_loss: {:.6f}'.format(epoch, config.epochs, 100.*train_output['mean_f1_score'], 100.*train_output['mean_acc'], train_output['loss'], train_output['source_bce_loss'], train_output['source_cl_loss'])})
             logger.info({'Train F1-score-list:'})
             logger.info(dataset_info(train_output['f1_score_list']))
             logger.info({'Train Acc-list:'})
