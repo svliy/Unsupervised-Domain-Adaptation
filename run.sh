@@ -27,7 +27,7 @@ CUDA_VISIBLE_DEVICES=0 python train_stage2.py --config_file bp4d2disfa_stage2
 CUDA_VISIBLE_DEVICES=5 python train_target.py --config_file bp4d2disfa_target
 
 # disfa ---> bp4d
-CUDA_VISIBLE_DEVICES=4 python train_stage1.py --config_file disfa2bp4d_stage1
+CUDA_VISIBLE_DEVICES=5 python train_stage1.py --config_file disfa2bp4d_stage1
 CUDA_VISIBLE_DEVICES=4 python train_stage2_one.py --config_file disfa2bp4d_stage2
 CUDA_VISIBLE_DEVICES=5 python train_target.py --config_file disfa2bp4d_target
 

@@ -63,65 +63,52 @@ def set_optimizer(config, params):
 
 
 def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler=None):
-    # 记录损失
     loss_all = AverageMeter()
     loss_source_bce = AverageMeter()
     loss_source_cl = AverageMeter()
-    loss_transfer = AverageMeter()
 
     model.train()
     model.freeze_bn()
     
     statistics_list = None
     source_loader = dataloaders['source_train']
-    # target_iter = iter(dataloaders['target_train'])
     len_dataloader = len(source_loader)
     
     
     for batch_idx, (source_img, source_label, source_img_name) in enumerate(tqdm(source_loader)):
-        # try:
-        # # 从目标域数据迭代器中获取一个batch
-        #     target_img, target_label, target_img_name = next(target_iter)
-        # except StopIteration:
-        # # 如果目标域数据迭代器遍历完成，则重新创建一个新的迭代器
-        #     target_iter = iter(dataloaders['target_train'])
-        #     target_img, target_label, target_img_name = next(target_iter)
         
         if torch.cuda.is_available():
             source_img, source_label = source_img.cuda(), source_label.float().cuda()
-            # target_img, target_label = target_img.cuda(), target_label.float().cuda()
         
         optimizer.zero_grad()
+
         source_output = model(source_img)
-        # target_output = model(target_img, text_ori)
         
         source_bce_loss = criterion['source_bce_loss'](source_output['logits'], source_label) # 源域分类损失
         # source_cl_loss = criterion['source_cl_loss'](source_output['au_vision_features'], source_output['au_text_features'], source_label) # 源域对比损失
         source_cl_loss = torch.tensor(0.0).cuda()
-        # transfer_loss = criterion['transfer_loss'](source_output['transfer_feature'], target_output['transfer_feature'])
-        transfer_loss = torch.tensor(0.0).cuda()
-        loss = source_bce_loss + config.source_cl_loss_weight*source_cl_loss + config.transfer_loss_weight*transfer_loss# 整体损失
+        
+        loss = source_bce_loss + config.source_cl_loss_weight * source_cl_loss # 整体损失
         loss.backward()
         optimizer.step()
         # print(f'可学习上下文向量：{model.prompt_learner.ctx[:,:5]}')
         
         loss_source_bce.update(source_bce_loss.data.item(), config.batch_size)
         loss_source_cl.update(source_cl_loss.data.item(), config.batch_size)
-        loss_transfer.update(transfer_loss.data.item(), config.batch_size)
         loss_all.update(loss.data.item(), config.batch_size)
         
         update_list = statistics(source_output['logits'].sigmoid().detach(), source_label.detach(), 0.5)
         statistics_list = update_statistics_list(statistics_list, update_list)
         
         if batch_idx == 0 or (batch_idx % (len_dataloader // 10) == 0):
-            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{len_dataloader} | loss: {loss_all.avg:.6f} | source_bce_loss: {loss_source_bce.avg} | source_cl_loss: {loss_source_cl.avg} | transfer_loss: {loss_transfer.avg}')
+            logger.info(f'Epoch: {epoch} | Batch: {batch_idx}/{len_dataloader} | loss: {loss_all.avg:.6f} | source_bce_loss: {loss_source_bce.avg} | source_cl_loss: {loss_source_cl.avg}')
     mean_f1_score, f1_score_list = calc_f1_score(statistics_list)
     mean_acc, acc_list = calc_acc(statistics_list)
+    
     return {
         'loss': loss_all.avg,
         'source_bce_loss': loss_source_bce.avg,
         'source_cl_loss': loss_source_cl.avg,
-        'transfer_loss': loss_transfer.avg,
         'mean_f1_score': mean_f1_score,
         'f1_score_list': f1_score_list,
         'mean_acc': mean_acc,
@@ -130,7 +117,6 @@ def train(epoch, config, model, dataloaders, criterion, optimizer, scheduler=Non
 
 
 def val(epoch, config, model, dataloaders, criterion=None):
-    # 记录损失
     model.eval()
     statistics_list = None
     val_loader = dataloaders['target_val']
@@ -139,7 +125,7 @@ def val(epoch, config, model, dataloaders, criterion=None):
         for batch_idx, (images, labels, img_name) in enumerate(tqdm(val_loader)):        
             if torch.cuda.is_available():
                 images, labels = images.cuda(), labels.float().cuda()
-            output = model(images) # forward pass
+            output = model(images)
             update_list = statistics(output['logits'].sigmoid().detach(), labels.detach(), 0.5)
             statistics_list = update_statistics_list(statistics_list, update_list)
     
@@ -153,71 +139,8 @@ def val(epoch, config, model, dataloaders, criterion=None):
     }
 
 
-def pseudo_label(epoch, config, ub_train_dataloader, model):
-    
-    model.eval()
-    outputs = []
-    truth_labels = []
-
-    with torch.no_grad():
-        for batch_idx, (images, labels) in enumerate(tqdm(ub_train_dataloader)):
-            if torch.cuda.is_available():
-                images, labels = images.cuda(), labels.float().cuda()
-            
-            logits = model(images)['logits']
-            outputs.append(torch.sigmoid(logits).detach().cpu().numpy())
-            truth_labels.append(labels.detach().cpu().numpy())
-
-        outputs = np.concatenate(outputs) # (108538, 10)
-        truth_labels = np.concatenate(truth_labels) # (108538, 10)
-        sorted_outputs = -np.sort(-outputs, axis=0)
-        n_ub = len(outputs)
-        # pos_label_freq = [] # 怎么设置
-        # [0.03694559, 0.13383332, 0.0367521 , 0.28355968, 0.24635611,
-        # 0.29492897, 0.03083713, 0.10628536, 0.24884373, 0.14259522],
-        # args.pos_label_freq = lb_train_labels.sum(0)/float(len(lb_train_labels))
-        pos_label_freq = truth_labels.sum(0)/float(n_ub)
-        
-        # 108538
-        # indices [4008, 14525, 3987, 30776, 26737, 32010, 3345, 11534, 27008, 15475]
-        indices = [int(x)-1 for x in pos_label_freq*n_ub]
-        # thre_vec
-        # array([0.9690664 , 0.9323347 , 0.27518275, 0.46617165, 0.7187698 ,
-        #  0.9118753 , 0.7603064 , 0.17218241, 0.17578791, 0.37467685]
-        thre_vec = sorted_outputs[indices, range(outputs.shape[1])]
-        # thre_vec = np.ones(outputs.shape[1]) * 0.5
-        pseudo_labels = (outputs>=thre_vec).astype(np.float32)
-        
-        if True:
-            # 每个类别正确预测为正例的数量 (真阳性 TP)。
-            n_correct_pos = (truth_labels*pseudo_labels).sum(0)
-            
-            # 每个类别预测为正例的总数 (TP + 假阳性 FP)。
-            n_pred_pos = ((pseudo_labels==1)).sum(0)
-            # 每个类别真实为正例的总数 (TP + 假阴性 FN)。
-            n_true_pos = truth_labels.sum(0)
-            OP = n_correct_pos.sum()/n_pred_pos.sum() # 0.5418174305699023
-            CP = np.nanmean(n_correct_pos/n_pred_pos) # 0.4150217363184052
-            OR = n_correct_pos.sum()/n_true_pos.sum() # 0.54179823
-            CR = np.nanmean(n_correct_pos/n_true_pos) # 0.4150001
-
-            # auc = np.zeros(labels.shape[1])
-            # for i in range(labels.shape[1]):
-                # auc[i] = metrics.roc_auc_score(labels[:,i], pseudo_labels[:,i])
-            # AUC = np.nanmean(auc)
-            logger.info('Train: ')
-            # logger.info(' AUC: %.3f'%AUC)
-            logger.info(' OP: %.3f'%OP)
-            logger.info(' CP: %.3f'%CP)
-            logger.info(' OR: %.3f'%OR)
-            logger.info(' CR: %.3f'%CR)
-            # pdb.set_trace()
-        
-        return pseudo_labels
-
-
 def main(args):
-    config = set_config(args) # 获取配置
+    config = set_config(args) # 获取配置文件的信息
     config = set_outdir(config) # 设置输出路径
     set_seed(config.seed) # 设置随机种子
     set_logger(config) # 设置日志
@@ -240,6 +163,7 @@ def main(args):
         
         model = TransferNet(config)
         model = model.cuda()
+
         # 模型参数量计算
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -269,7 +193,6 @@ def main(args):
         # Train and val loop    
         best_f1 = 0
         best_epoch = 0
-        # config.stop = 0 # early stop
         
         for epoch in range(1, config.epochs + 1):
             
@@ -296,16 +219,11 @@ def main(args):
             if current_f1 > best_f1:
                 best_f1 = current_f1
                 best_epoch = epoch
-                # config.stop = 0
             logger.info(f"Best f1: {best_f1} at epoch {best_epoch}")
             checkpoint = {
                     'state_dict': model.state_dict(),
                 }
-            torch.save(checkpoint, os.path.join(config['outdir'], 'E' + str(epoch) + '_model_fold' + str(config.fold) + '.pth'))
-            
-            # config.stop = config.stop + 1
-            # if config.stop > config.early_stop:
-            #     break
+            torch.save(checkpoint, os.path.join(config['outdir'], 'model_epoch_' + str(epoch) + '_fold_' + str(config.fold) + '.pth'))
             
     elif config.train_or_test == 'test':
         logger.info("****************[Test Mode]****************")
@@ -333,7 +251,8 @@ def main(args):
         logger.info(dataset_info(val_output['f1_score_list']))
         logger.info({'Val Acc-list:'})
         logger.info(dataset_info(val_output['acc_list']))
-        
+
+
 if __name__ == '__main__':
     parse = argparse.ArgumentParser()
     parse.add_argument('--config_file', type=str, default='bp4d2gft',

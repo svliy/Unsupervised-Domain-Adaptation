@@ -41,185 +41,88 @@ class LinearBlock(nn.Module):
         x = x.permute(0, 2, 1).reshape(B, C, H, W)
         return x
 
-# class VisionAdapter(nn.Module):
-#     """Applies a 1x1 Conv, BatchNorm, ReLU, and AvgPool."""
-#     def __init__(self, in_dim, out_dim, pool_kernel, pool_stride):
-#         super().__init__()
-#         # self.adapter = nn.Sequential(
-#         #     nn.Conv2d(in_dim, out_dim, kernel_size=1, bias=False),
-#         #     nn.BatchNorm2d(out_dim),
-#         #     nn.ReLU(inplace=True)
-#         # )
-        
-#         self.fc = nn.Linear(in_dim, out_dim)
-#         self.bn = nn.BatchNorm1d(out_dim)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.fc.weight.data.normal_(0, math.sqrt(2. / out_dim))
-#         self.bn.weight.data.fill_(1)
-#         self.bn.bias.data.zero_()
-        
-#         self.pool = nn.AvgPool2d(kernel_size=pool_kernel, stride=pool_stride)
-
-#     def forward(self, x):
-#         # x: [256, 2048, 7, 7]
-#         B, C, H, W = x.shape
-#         x = x.reshape(B, C, H*W).permute(0, 2, 1) # [B, 49, 2048]
-#         # x = self.drop(x) # [B, 49, 2048]
-#         x = self.fc(x).permute(0, 2, 1) # [B, 512, 49]
-#         # the input of BN_1D is (N, C, L)
-#         x = self.relu(self.bn(x))
-#         B, C, _ = x.shape
-#         x = x.reshape(B, C, H, W)
-#         x = self.pool(x)
-#         return x
 
 class VisionAdapter(nn.Module):
-    """Applies a 1x1 Conv, BatchNorm, ReLU, and AvgPool."""
+    """
+    该模块包含两个残差连接和一个多路并行卷积块。
+    """
     def __init__(self, in_dim, out_dim, pool_kernel, pool_stride):
+        
         super().__init__()
-        self.adapter = nn.Sequential(
-            nn.Conv2d(in_dim, out_dim, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_dim),
-            nn.ReLU(inplace=True)
-        )
-        # Ensure pool output size is consistent if needed, e.g., target 7x7
-        # Simple AvgPool is used here as in the original code.
+        self.projection = nn.Linear(in_dim, out_dim)
+        self.bn = nn.BatchNorm2d(out_dim)
+
+        self.conv3x3 = nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False)
+        self.conv5x5 = nn.Conv2d(out_dim, out_dim, kernel_size=5, padding=2, bias=False)
+        self.conv7x7 = nn.Conv2d(out_dim, out_dim, kernel_size=7, padding=3, bias=False)
+
+        self.relu = nn.ReLU(inplace=True)
         self.pool = nn.AvgPool2d(kernel_size=pool_kernel, stride=pool_stride)
 
     def forward(self, x):
-        return self.pool(self.adapter(x))
+        
+        B, C_in, H, W = x.shape # [256, 2048, 7, 7]
+        x = x.reshape(B, C_in, H*W).permute(0, 2, 1) # [B, H*W, 2048]
+        x = self.projection(x).permute(0, 2, 1) # [B, 256, H*W]
+        
+        B, C_out, _ = x.shape
+        x = x.reshape(B, C_out, H, W)
+        identity_1 = x
+        x = self.bn(x)
+        x = x + identity_1
+
+        # 多路并行卷积
+        identity_2 = x
+        conv3_out = self.conv3x3(x) # [B, 256, H, W]
+        conv5_out = self.conv5x5(x) # [B, 256, H, W]
+        conv7_out = self.conv7x7(x) # [B, 256, H, W]
+        # 平均卷积结果
+        avg_conv_out = (conv3_out + conv5_out + conv7_out) / 3.0
+        x = avg_conv_out + identity_2
+
+        x = self.relu(x)
+        x = self.pool(x)
+        return x
+
 
 class BranchLayer(nn.Module):
-    """Applies a 1x1 Conv, BatchNorm, ReLU, and AvgPool."""
-    def __init__(self, feature_dim):
+    """
+    一个带残差连接的特征瓶颈层 (Bottleneck Layer with Residual Connection)。
+    它应用 C -> C/2 -> C 的变换，然后将结果与原始输入相加。
+    """
+    def __init__(self, feature_dim: int):
         super().__init__()
-        
-        self.conv1 = nn.Conv2d(feature_dim, feature_dim, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(feature_dim)
-        self.relu = nn.ReLU(inplace=True)
+        # 计算瓶颈部分的维度
+        bottleneck_dim = feature_dim // 2
+        # 使用 nn.Sequential 构建瓶颈结构，使代码更清晰
+        self.bottleneck = nn.Sequential(
+            # 1. 压缩层：feature_dim -> feature_dim // 2
+            nn.Conv2d(feature_dim, bottleneck_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(bottleneck_dim),
+            nn.ReLU(inplace=True),
+            
+            # 2. 扩张层：feature_dim // 2 -> feature_dim
+            nn.Conv2d(bottleneck_dim, feature_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(feature_dim),
+        )
+        # 单独定义最终的激活函数
+        self.final_relu = nn.ReLU(inplace=True)
         
     def forward(self, x):
-        
-        x = self.conv1(x)
-        x = self.bn1(x)
-        output = self.relu(x)
+        """
+        定义前向传播过程，包含残差连接。
+        """
+        # 1. 保存原始输入，作为残差连接的 "identity"
+        identity = x
+        # 2. 将输入通过瓶颈变换结构 F(x)
+        residual = self.bottleneck(x)
+        # 3. 将瓶颈结构的输出与原始输入相加
+        output = identity + residual
+        # 4. 在相加后应用最终的激活函数
+        output = self.final_relu(output)
         
         return output
 
-class VisionAdapterV2(nn.Module):
-    """Applies a 1x1 Conv, BatchNorm, ReLU, and AvgPool."""
-    def __init__(self, in_dim, out_dim, pool_kernel, pool_stride, inter_dim=128):
-        super().__init__()
-        # 维度变换
-        self.project_down = nn.Linear(in_dim, inter_dim)
-        self.project_up = nn.Linear(inter_dim, out_dim)
-        
-        self.bn1 = nn.BatchNorm1d(inter_dim)
-        
-        self.relu = nn.ReLU(inplace=True)
-        self.pool = nn.AvgPool2d(kernel_size=pool_kernel, stride=pool_stride)
-        # self.conv_down =  nn.Conv2d(in_dim, out_dim, kernel_size=1)
-        # self.conv1 = nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=3 // 2)
-        # self.conv2 = nn.Conv2d(out_dim, out_dim, kernel_size=5, padding=5 // 2)
-        # self.conv3 = nn.Conv2d(out_dim, out_dim, kernel_size=7, padding=7 // 2)
-        # self.conv_identity = nn.Conv2d(out_dim, out_dim, kernel_size=1)
-        
-    def forward(self, x):
-        B, C, H, W = x.shape
-        x = x.reshape(B, C, H*W).permute(0, 2, 1) # [B, 49, 2048]
-        x = self.project_down(x) # [B, 49, inter_dim]
-        
-        x = x.permute(0, 2, 1) # [B, inter_dim, 49]
-        x = self.bn1(x)
-        
-        x = x.permute(0, 2, 1) # [B, 49, inter_dim]
-        x = self.relu(x)
-        x = self.project_up(x) # [B, 49, out_dim]
-        
-        x = x.reshape(B, -1, H, W)
-        x = self.pool(x)
-        # conv1_x = self.conv1(x)
-        # conv2_x = self.conv2(x)
-        # conv3_x = self.conv3(x)
-        # x = (conv1_x + conv2_x + conv3_x) / 3.0 + identity
-        # x = (conv1_x + conv2_x + conv3_x) / 3.0
-        # x = self.conv_identity(x)
-        # pdb.set_trace()
-        return x
-
-class MonaOp(nn.Module):
-    
-    def __init__(self, in_features):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_features, in_features, kernel_size=3, padding=3 // 2, groups=in_features)
-        self.conv2 = nn.Conv2d(in_features, in_features, kernel_size=5, padding=5 // 2, groups=in_features)
-        self.conv3 = nn.Conv2d(in_features, in_features, kernel_size=7, padding=7 // 2, groups=in_features)
-
-        self.projector = nn.Conv2d(in_features, in_features, kernel_size=1, )
-
-    def forward(self, x):
-        identity = x
-        conv1_x = self.conv1(x)
-        conv2_x = self.conv2(x)
-        conv3_x = self.conv3(x)
-
-        x = (conv1_x + conv2_x + conv3_x) / 3.0 + identity
-
-        identity = x
-
-        x = self.projector(x)
-
-        return identity + x
-    
-class MonaRes(nn.Module):
-    # [B, L, C]
-    # [256, 197, 768]
-    def __init__(self, in_dim, inter_dim=128, out_dim=None, pool=None, hw_shapes=None):
-        super().__init__()
-
-        self.project1 = nn.Linear(in_dim, inter_dim)
-        self.nonlinear = F.gelu
-        self.project2 = nn.Linear(inter_dim, out_dim)
-
-        self.dropout = nn.Dropout(p=0.1)
-
-        self.adapter_conv = MonaOp(inter_dim)
-
-        self.norm = nn.LayerNorm(in_dim)
-        self.gamma = nn.Parameter(torch.ones(in_dim) * 1e-6)
-        self.gammax = nn.Parameter(torch.ones(in_dim))
-        
-        self.pooling = nn.AvgPool2d(kernel_size=pool[0], stride=pool[1])
-        self.hw_shapes = hw_shapes
-
-    def forward(self, x, hw_shapes=None):
-        # x: [B, C, H, W]
-        B, C, H, W = x.shape
-        x = x.reshape(B, C, -1).permute(0, 2, 1) # [B, H*W, C]
-        
-        identity = x
-
-        x = self.norm(x) * self.gamma + x * self.gammax
-
-        project1 = self.project1(x)
-
-        b, n, c = project1.shape
-        h, w = self.hw_shapes
-        project1 = project1.reshape(b, h, w, c).permute(0, 3, 1, 2)
-        project1 = self.adapter_conv(project1)
-        project1 = project1.permute(0, 2, 3, 1).reshape(b, n, c)
-
-        nonlinear = self.nonlinear(project1)
-        nonlinear = self.dropout(nonlinear)
-        project2 = self.project2(nonlinear)
-        
-        # out = identity + project2
-        out = project2
-        out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        out = self.pooling(out)
-
-        return out
-    
 class TextEncoder(nn.Module):
     def __init__(self, clip_model):
         super().__init__()
@@ -378,59 +281,6 @@ class PromptLearner(nn.Module):
 
         return prompts
 
-class MultiScaleFusion(nn.Module):
-    """
-    一个用于组合多尺度特征的模块。
-
-    Args:
-        vision_dim (int): 输入和输出特征的维度。
-    """
-    def __init__(self, vision_dim: int, bottle_dim: int, dropout=0.3):
-        super().__init__()
-        self.vision_dim = vision_dim
-        self.conv1 = nn.Conv2d(vision_dim, bottle_dim, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(bottle_dim)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.drop1  = nn.Dropout(dropout)
-        
-        # self.conv2 = nn.Conv2d(bottle_dim, bottle_dim, kernel_size=1, bias=False)
-        # self.bn2 = nn.BatchNorm2d(bottle_dim)
-        # self.relu2 = nn.ReLU(inplace=True)
-        # self.drop2  = nn.Dropout(dropout)
-        
-        # self.conv3 = nn.Conv2d(bottle_dim, bottle_dim, kernel_size=1, bias=False)
-        # self.bn3 = nn.BatchNorm2d(bottle_dim)
-        # self.relu3 = nn.ReLU(inplace=True)
-        # self.drop3  = nn.Dropout(dropout)
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        前向传播。
-
-        Args:
-            x (torch.Tensor): 输入张量，通道数应为 4 * vision_dim。
-
-        Returns:
-            torch.Tensor: 输出张量，通道数应为 vision_dim。
-        """
-        x = self.conv1(x) # [128, 128, 7, 7]
-        x = self.bn1(x)
-        x = self.relu1(x)
-        out = self.drop1(x)
-
-        # out = self.conv2(out)
-        # out = self.bn2(out)
-        # out = self.relu2(out)
-        # out = self.drop2(out)
-        # indentation = out
-
-        # out = self.conv3(out)
-        # out = self.bn3(out)
-        # out = indentation + out
-        # out = self.relu3(out)
-        # out = self.drop3(out)
-        return out
-
 class TransferNet(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
@@ -459,55 +309,21 @@ class TransferNet(nn.Module):
             param.requires_grad = False
         # self.clip_logit_scale.requires_grad = False
         
-        # Vision Adapters for multi-scale features
-        # Assuming ResNet50 stages output: s1: 256, s2: 512, s3: 1024, s4: 2048
+        # 适配器
         self.adapter_s1 = VisionAdapter(self.vision_dim , self.vision_dim, pool_kernel=8, pool_stride=8) # 56x56 -> 7x7
         self.adapter_s2 = VisionAdapter(self.vision_dim * 2, self.vision_dim, pool_kernel=4, pool_stride=4) # 28x28 -> 7x7
         self.adapter_s3 = VisionAdapter(self.vision_dim * 4, self.vision_dim, pool_kernel=2, pool_stride=2) # 14x14 -> 7x7
         self.adapter_s4 = VisionAdapter(self.vision_dim * 8, self.vision_dim, pool_kernel=1, pool_stride=1) # 7x7 -> 7x7
-        
-        # self.adapter_s4 = LinearBlock(self.vision_dim * 4, self.vision_dim)
 
-        # self.adapter_s1 = MonaRes(resnet_s1_dim, inter_dim=128, out_dim=256, pool=(8, 8), hw_shapes=(56, 56))
-        # self.adapter_s2 = MonaRes(resnet_s1_dim * 2, inter_dim=128, out_dim=256, pool=(4, 4), hw_shapes=(28, 28))
-        # self.adapter_s3 = MonaRes(resnet_s1_dim * 4, inter_dim=128, out_dim=256, pool=(2, 2), hw_shapes=(14, 14))
-        # self.adapter_s4 = MonaRes(resnet_s1_dim * 8, inter_dim=128, out_dim=256, pool=(1, 1), hw_shapes=(7, 7))
-        
-        # Combiner for adapted multi-scale features
-        # 这个方式是最好的吗？
-        self.multi_scale_fusion = MultiScaleFusion(4 * self.vision_dim, self.vision_dim, config.drop_rate)
-        
         # Cross Attention
         # (seq_len, batch, embed_dim)
         # self.cross_attention = CrossAttention(embed_dim=self.vision_dim, num_heads=8, layers=2)
         
-        # AU-specific linear layers
-        # self.au_specific_linears = nn.ModuleList([
-            # nn.Sequential(nn.Conv2d(self.vision_dim, self.vision_dim, kernel_size=1, bias=False),
-                        #   nn.BatchNorm2d(self.vision_dim),
-                        #   nn.ReLU(inplace=True),
-                        #   nn.Dropout(config.drop_rate))
-        #     for _ in range(self.num_classes)
-        # ])
+        self.branch_layers = nn.ModuleList([
+            BranchLayer(self.vision_dim) for _ in range(self.num_classes)
+        ])
         
-        au_specific_layers = []
-        for i in range(self.num_classes):
-            layer = BranchLayer(self.vision_dim)
-            au_specific_layers += [layer]
-        self.au_specific_layers = nn.ModuleList(au_specific_layers)
-        
-        # au_specific_layers = []
-        # for i in range(self.num_classes):
-        #     layer = nn.Sequential(
-        #         nn.Conv2d(self.vision_dim, self.vision_dim, kernel_size=1),
-        #         nn.BatchNorm2d(self.vision_dim),
-        #         nn.ReLU(inplace=True),
-        #     )
-        #     au_specific_layers += [layer]
-        # self.au_specific_layers = nn.ModuleList(au_specific_layers)
-        
-        
-        # --- Graph Network ---
+        # 图神经网络
         self.gnn = GNN(self.vision_dim, num_classes=self.num_classes, neighbor_num=config.neighbor_num, metric='cosine')
 
         # --- Independent AU Classifiers ---
@@ -516,16 +332,10 @@ class TransferNet(nn.Module):
             nn.Sequential(nn.Linear(self.vision_dim, 1))
             for _ in range(self.num_classes)
         ])
-        self.sigmoid = nn.Sigmoid() # To convert logits to probabilities
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(self.vision_dim, self.num_classes),
-        )
         
     def freeze_bn(self):
+        # 冻结图像编码器的BN层
         for module in self.image_encoder.modules():
             if isinstance(module, torch.nn.BatchNorm2d):
                 module.eval()
@@ -533,33 +343,35 @@ class TransferNet(nn.Module):
     def forward(self, image, text=None, labels=None):
 
         B, C, H, W = image.shape # images: [128, 3, 224, 224]
-        
+
+        # 1. 提取视觉特征
+        image_features = self.image_encoder(image) # RN50: [128, 1024]
+        image_features_s1 = image_features['layer1'] # Shape: [B, 256, 56, 56]
+        image_features_s2 = image_features['layer2'] # Shape: [B, 512, 28, 28]
+        image_features_s3 = image_features['layer3'] # Shape: [B, 1024, 14, 14]
+        image_features_s4 = image_features['layer4'] # Shape: [B, 2048, 7, 7]
+
+        # 2. 适配器
+        adapter_features_s1 = self.adapter_s1(image_features_s1) # Shape: [B, 256, 7, 7]
+        adapter_features_s2 = self.adapter_s2(image_features_s2) # Shape: [B, 256, 7, 7]
+        adapter_features_s3 = self.adapter_s3(image_features_s3) # Shape: [B, 256, 7, 7]
+        adapter_features_s4 = self.adapter_s4(image_features_s4) # Shape: [B, 256, 7, 7]
+        # 特征相加: [B, 256, 7, 7]
+        image_features_fusion = adapter_features_s1 + adapter_features_s2 + adapter_features_s3 + adapter_features_s4
+
         # 1. text features
         # prompts = self.prompt_learner() # [10, 77, 512]
         # tokenized_prompts = self.tokenized_prompts # [10, 77]
         # text_features = self.text_encoder(prompts, tokenized_prompts) # [10, 1024]
         # text_features = self.text_transform(text_features) # [10, 256]
         
-        # 2. image features
-        ## 2.1 Extract Multi-Scale Vision Features via Hooks
-        image_features = self.image_encoder(image) # RN50: [128, 1024]
-        image_features_s1 = image_features['layer1'] # Shape: [B, 256, 56, 56]
-        image_features_s2 = image_features['layer2'] # Shape: [B, 512, 28, 28]
-        image_features_s3 = image_features['layer3'] # Shape: [B, 1024, 14, 14]
-        image_features_s4 = image_features['layer4'] # Shape: [B, 2048, 7, 7]
         
-        ## 2.2 Adapt and Pool Features
-        image_features_s1 = self.adapter_s1(image_features_s1) # Shape: [B, 256, 7, 7]
-        image_features_s2 = self.adapter_s2(image_features_s2) # Shape: [B, 256, 7, 7]
-        image_features_s3 = self.adapter_s3(image_features_s3) # Shape: [B, 256, 7, 7]
-        image_features_s4 = self.adapter_s4(image_features_s4) # Shape: [B, 256, 7, 7]
+       
         
         
         ## 2.3 Combine Multi-Scale Features
         # image_features_fusion = torch.cat([image_features_s1, image_features_s2, image_features_s3, image_features_s4], dim=1) # Shape: [B, 1024, 7, 7]
         # image_features_fusion = self.multi_scale_fusion(image_features_fusion) # Shape: [B, 256, 7, 7]
-        
-        image_features_fusion = image_features_s1 + image_features_s2 + image_features_s3 + image_features_s4
         
         # # 3. cross attention
         # # combined_features
@@ -574,20 +386,20 @@ class TransferNet(nn.Module):
         # vision_features_cross = image_features_s4
         
         # image_features_fusion = image_features_s4
-        # 4. Apply AU-specific Layers and Pool
-        au_specific_features = []
-        for layer in self.au_specific_layers:
-            output = layer(image_features_fusion).unsqueeze(1)
-            au_specific_features.append(output) # Shape: 10 * [B, 1, 256, 7, 7]
-        au_specific_features = torch.cat(au_specific_features, dim=1) # Shape: [B, 5, 256, 7, 7]
+
+        # 4. 多分支AU网络
+
+        # 使用列表推导式高效地得到所有分支的输出, 结果是一个list，包含N个 [B, C, H, W] 的张量
+        branch_outputs = [layer(image_features_fusion) for layer in self.branch_layers]
+        # 新张量的形状为 [B, N, C, H, W]，其中 N 是分支数量
+        au_specific_features = torch.stack(branch_outputs, dim=1) 
         au_specific_features = au_specific_features.reshape(B, self.config.class_num, self.vision_dim, -1)
-        au_pooled_features = au_specific_features.mean(dim=-1) # [B, 5, 256]
+        au_pooled_features = au_specific_features.mean(dim=-1) # [B, num_classes, 256]
         
-        # # 5. Graph Neural Network Processing
-        # # pdb.set_trace()
+        # 5. 图卷积网络
         gnn_features = self.gnn(au_pooled_features) # Shape: [B, num_classes, 256]
         
-        # # 6. Independent Classification for each AU
+        # 6. AU分类器
         logits = []
         for i in range(self.num_classes):
             au_feature = gnn_features[:, i, :] # Shape: [B, vision_dim]
@@ -596,18 +408,11 @@ class TransferNet(nn.Module):
             logits.append(logit)
         logits = torch.cat(logits, dim=1) # Shape: [B, num_classes]
         
-        
-        
         return {
             'logits': logits,
             # 'au_vision_features': gnn_features, # [B, num_classes, 256]
             # 'au_text_features': text_features,  # [num_classes, 256]
         }
-
+    
 if __name__ == "__main__":
-    model = TransferNet()
-
-    x = torch.randn(1, 3, 224, 224)
-    output = model(x)
-    print(f"The output of model is: {output}")
-    # print(f"Model: {model}")
+    pass

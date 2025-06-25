@@ -1,6 +1,6 @@
 # Experiment Setup
 exp_name: 'disfa2bp4d'
-seed: 1113
+seed: 2025
 stage: 'one'
 train_or_test: 'train'
 checkpoint_path: ''
@@ -31,15 +31,12 @@ optimizer: 'adamw'
 lr_init: 0.0001
 momentum: 0.9
 weight_decay: 0.0005
-stop: 0
-early_stop: 5
 source_cl_loss_weight: 0.1
-transfer_loss_weight: 10.0
 
 # Model Parameters
 backbone: 'RN50' # RN50, ViT-B/16
 drop_rate: 0.3
-neighbor_num: 5
+neighbor_num: 4
 
 # CoOp
 n_ctx: 16
