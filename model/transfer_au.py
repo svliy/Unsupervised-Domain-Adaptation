@@ -42,48 +42,63 @@ class LinearBlock(nn.Module):
         return x
 
 
-class VisionAdapter(nn.Module):
-    """
-    该模块包含两个残差连接和一个多路并行卷积块。
-    """
-    def __init__(self, in_dim, out_dim, pool_kernel, pool_stride):
+# class VisionAdapter(nn.Module):
+#     """
+#     该模块包含两个残差连接和一个多路并行卷积块。
+#     """
+#     def __init__(self, in_dim, out_dim, pool_kernel, pool_stride):
         
+#         super().__init__()
+#         self.projection = nn.Linear(in_dim, out_dim)
+#         self.bn = nn.BatchNorm2d(out_dim)
+
+#         self.conv3x3 = nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False)
+#         self.conv5x5 = nn.Conv2d(out_dim, out_dim, kernel_size=5, padding=2, bias=False)
+#         self.conv7x7 = nn.Conv2d(out_dim, out_dim, kernel_size=7, padding=3, bias=False)
+
+#         self.relu = nn.ReLU(inplace=True)
+#         self.pool = nn.AvgPool2d(kernel_size=pool_kernel, stride=pool_stride)
+
+#     def forward(self, x):
+        
+#         B, C_in, H, W = x.shape # [256, 2048, 7, 7]
+#         x = x.reshape(B, C_in, H*W).permute(0, 2, 1) # [B, H*W, 2048]
+#         x = self.projection(x).permute(0, 2, 1) # [B, 256, H*W]
+        
+#         B, C_out, _ = x.shape
+#         x = x.reshape(B, C_out, H, W)
+#         identity_1 = x
+#         x = self.bn(x)
+#         x = x + identity_1
+
+#         # 多路并行卷积
+#         identity_2 = x
+#         conv3_out = self.conv3x3(x) # [B, 256, H, W]
+#         conv5_out = self.conv5x5(x) # [B, 256, H, W]
+#         conv7_out = self.conv7x7(x) # [B, 256, H, W]
+#         # 平均卷积结果
+#         avg_conv_out = (conv3_out + conv5_out + conv7_out) / 3.0
+#         x = avg_conv_out + identity_2
+
+#         x = self.relu(x)
+#         x = self.pool(x)
+#         return x
+
+class VisionAdapter(nn.Module):
+    """Applies a 1x1 Conv, BatchNorm, ReLU, and AvgPool."""
+    def __init__(self, in_dim, out_dim, pool_kernel, pool_stride):
         super().__init__()
-        self.projection = nn.Linear(in_dim, out_dim)
-        self.bn = nn.BatchNorm2d(out_dim)
-
-        self.conv3x3 = nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False)
-        self.conv5x5 = nn.Conv2d(out_dim, out_dim, kernel_size=5, padding=2, bias=False)
-        self.conv7x7 = nn.Conv2d(out_dim, out_dim, kernel_size=7, padding=3, bias=False)
-
-        self.relu = nn.ReLU(inplace=True)
+        self.adapter = nn.Sequential(
+            nn.Conv2d(in_dim, out_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_dim),
+            nn.ReLU(inplace=True)
+        )
+        # Ensure pool output size is consistent if needed, e.g., target 7x7
+        # Simple AvgPool is used here as in the original code.
         self.pool = nn.AvgPool2d(kernel_size=pool_kernel, stride=pool_stride)
 
     def forward(self, x):
-        
-        B, C_in, H, W = x.shape # [256, 2048, 7, 7]
-        x = x.reshape(B, C_in, H*W).permute(0, 2, 1) # [B, H*W, 2048]
-        x = self.projection(x).permute(0, 2, 1) # [B, 256, H*W]
-        
-        B, C_out, _ = x.shape
-        x = x.reshape(B, C_out, H, W)
-        identity_1 = x
-        x = self.bn(x)
-        x = x + identity_1
-
-        # 多路并行卷积
-        identity_2 = x
-        conv3_out = self.conv3x3(x) # [B, 256, H, W]
-        conv5_out = self.conv5x5(x) # [B, 256, H, W]
-        conv7_out = self.conv7x7(x) # [B, 256, H, W]
-        # 平均卷积结果
-        avg_conv_out = (conv3_out + conv5_out + conv7_out) / 3.0
-        x = avg_conv_out + identity_2
-
-        x = self.relu(x)
-        x = self.pool(x)
-        return x
-
+        return self.pool(self.adapter(x))
 
 class BranchLayer(nn.Module):
     """
